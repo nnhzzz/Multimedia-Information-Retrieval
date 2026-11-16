@@ -127,7 +127,17 @@ cd ..
 
 ---
 
-## 6. Giấy phép & Tài liệu tham khảo
+## 6. Tác giả & Nhóm thực hiện
+
+- **Đề tài:** Multimedia Information Retrieval / Video Event Retrieval
+- **Môn học:** CS336 — Đại học Công nghệ Thông tin (UIT)
+- **Nhóm thực hiện:** Nhóm 7
+  - **Nguyễn Đức Nhật**
+  - **Nguyễn Ngọc Hưng**
+
+---
+
+## 7. Giấy phép & Tài liệu tham khảo
 
 - Đồ án được xây dựng phục vụ nghiên cứu và học tập môn CS336 tại UIT.
 - Tài liệu kiến trúc và hướng dẫn chuyên sâu có thể tham khảo thêm tại thư mục `docs/`.

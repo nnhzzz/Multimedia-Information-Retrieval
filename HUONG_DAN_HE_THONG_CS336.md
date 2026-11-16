@@ -1,6 +1,6 @@
 # Hướng dẫn hiểu và xây dựng hệ thống truy vấn video CS336
 
-Dành cho Nguyễn Đức Nhật · Chuẩn bị ngày 14/10/2026
+Dành cho Nhóm 7: Nguyễn Đức Nhật & Nguyễn Ngọc Hưng · Chuẩn bị ngày 14/10/2026
 
 Tài liệu này giải thích thiết kế tổng thể của hệ thống: vì sao cần từng thành phần, dữ liệu đi qua đâu, website hoạt động thế nào, DRES chấm điểm ở đâu và cần kiểm tra điều gì. Đây là giáo trình trước khi triển khai, chưa phải báo cáo một hệ thống đã chạy. Các endpoint, đường dẫn code và lệnh `app.cli` dưới đây là hợp đồng dự kiến; Codex phải hiện thực rồi cập nhật chúng theo code cuối cùng.
 

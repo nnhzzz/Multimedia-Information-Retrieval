@@ -1,4 +1,4 @@
-# Giáo trình đọc và bảo vệ hệ thống — Nguyễn Đức Nhật
+# Giáo trình đọc và bảo vệ hệ thống — Nhóm 7 (Nguyễn Đức Nhật & Nguyễn Ngọc Hưng)
 
 Tài liệu này hướng dẫn đọc code đã hiện thực trong workspace, từ dữ liệu đầu vào đến tìm kiếm, xem video và nộp đáp án. Đọc `README.md` để chạy ứng dụng trước, sau đó học theo từng phần dưới đây. Hai tài liệu hướng dẫn và prompt gốc vẫn được giữ như đầu vào thiết kế. Hệ thống không yêu cầu fine-tune model hoặc gọi API trả phí.
 
