@@ -5,10 +5,11 @@ import { SubmissionPanel } from './SubmissionPanel';
 import type { EvaluationList, SearchResult } from './types';
 
 /** Seek bằng ms / 1000 sau loadedmetadata; hủy listener và request cũ khi đổi kết quả. */
-export function Inspector({ selected, evaluations, saved, feedback, imageAvailable, onClose, onSelect, onSave, onFeedback, onExample, onSubmitted }: {
+export function Inspector({ selected, evaluations, saved, feedback, imageAvailable, onClose, onSelect, onSave, onFeedback, onExample, onSubmitted, initialTaskKey, initialTaskType, initialEvaluationId }: {
   selected: SearchResult; evaluations: EvaluationList | null; saved: boolean; feedback?: boolean; imageAvailable: boolean;
   onClose: () => void; onSelect: (result: SearchResult) => void; onSave: (result: SearchResult) => void;
   onFeedback: (result: SearchResult, relevant: boolean) => void; onExample: (result: SearchResult) => void; onSubmitted: () => void;
+  initialTaskKey?: string; initialTaskType?: 'KIS' | 'QA'; initialEvaluationId?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [neighbors, setNeighbors] = useState<SearchResult[]>([]);
@@ -53,6 +54,13 @@ export function Inspector({ selected, evaluations, saved, feedback, imageAvailab
     <button className={`button secondary full ${saved ? 'saved' : ''}`} onClick={() => onSave(selected)}><Icon name={saved ? 'check' : 'bookmark'} size={17} />{saved ? 'Đã lưu · bấm để bỏ lưu' : 'Lưu vào ứng viên'}</button>
     <button className="button text-button full" disabled={!imageAvailable} title={!imageAvailable ? 'Tìm bằng ảnh chưa có sẵn hoặc bị chặn bởi luật Video KIS.' : undefined} onClick={() => onExample(selected)}><Icon name="image" size={17} /> Dùng khung hình này để tìm tiếp</button>
     <details className="evidence"><summary>Điểm xếp hạng & nguồn đóng góp</summary><p className="small muted">{Object.keys(selected.contributions).length ? `Điểm ${Number(selected.score).toFixed(5)} là điểm xếp hạng, không phải xác suất đúng.` : 'Khung hình từ metadata. Không có điểm truy vấn cho lần chọn này.'}</p><pre>{JSON.stringify(selected.contributions, null, 2)}</pre>{selected.text && <blockquote>{selected.text}</blockquote>}<small className="muted">Keyframe ID: {selected.keyframe_id}</small></details>
-    <SubmissionPanel selected={selected} evaluations={evaluations} onSubmitted={onSubmitted} />
+    <SubmissionPanel
+      selected={selected}
+      evaluations={evaluations}
+      onSubmitted={onSubmitted}
+      initialTaskKey={initialTaskKey}
+      initialTaskType={initialTaskType}
+      initialEvaluationId={initialEvaluationId}
+    />
   </aside>;
 }

@@ -61,6 +61,14 @@ export interface EvaluationResponse {
   ground_truth_available: boolean;
 }
 export interface HistoryResponse { queries: JsonRecord[]; submissions: JsonRecord[] }
+export interface DresStatus {
+  base_url: string;
+  has_session: boolean;
+  session_preview: string;
+  mode: 'dry_run' | 'live';
+  default_server: string;
+  username?: string;
+}
 export interface SubmissionRequest {
   keyframe_id: string;
   timestamp_ms: number;

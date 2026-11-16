@@ -104,9 +104,104 @@ class DresService:
         self.dry_run = self.environ.get("DRES_DRY_RUN", "true").lower() != "false"
         self.base_url = self.environ.get("DRES_BASE_URL", "").rstrip("/")
         self._session = self.environ.get("DRES_SESSION_ID", "")
+
+        # Nạp cấu hình runtime đã lưu trước đó nếu có
+        try:
+            config_dir = getattr(self.settings, "data_root", None)
+            config_file = config_dir / "dres_config.json" if isinstance(config_dir, Path) else None
+            if config_file and config_file.is_file():
+                saved = json.loads(config_file.read_text(encoding="utf-8"))
+                if not self.base_url and saved.get("base_url"):
+                    self.base_url = saved["base_url"].rstrip("/")
+                if not self._session and saved.get("session_id"):
+                    self._session = saved["session_id"]
+                if "dry_run" in saved and "DRES_DRY_RUN" not in self.environ:
+                    self.dry_run = bool(saved["dry_run"])
+                if saved.get("username") and "DRES_USERNAME" not in self.environ:
+                    self.environ["DRES_USERNAME"] = saved["username"]
+        except Exception:
+            pass
+
+        if not self.base_url:
+            self.base_url = "https://aiclub.uit.edu.vn/dres"
+
         self._transport = transport or self._urllib_transport
         with self.db.connection() as conn:
             conn.executescript(LEDGER_SCHEMA)
+
+    def _save_runtime_config(self, username: str | None = None) -> None:
+        """Lưu cấu hình DRES runtime vào file JSON local để không mất khi reload."""
+        try:
+            config_dir = getattr(self.settings, "data_root", None)
+            if config_dir and isinstance(config_dir, Path):
+                config_dir.mkdir(parents=True, exist_ok=True)
+                config_file = config_dir / "dres_config.json"
+                data = {
+                    "base_url": self.base_url,
+                    "session_id": self._session,
+                    "dry_run": self.dry_run,
+                    "username": username or self.environ.get("DRES_USERNAME", ""),
+                }
+                config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def get_status(self) -> dict:
+        """Trạng thái kết nối DRES hiện tại."""
+        session_preview = ""
+        if self._session:
+            session_preview = f"{self._session[:6]}...{self._session[-4:]}" if len(self._session) > 10 else "***"
+        return {
+            "base_url": self.base_url or "https://aiclub.uit.edu.vn/dres",
+            "has_session": bool(self._session),
+            "session_preview": session_preview,
+            "mode": "dry_run" if self.dry_run else "live",
+            "default_server": "https://aiclub.uit.edu.vn/dres",
+            "username": self.environ.get("DRES_USERNAME", ""),
+        }
+
+    def set_config(self, *, base_url: str | None = None, session_id: str | None = None,
+                   dry_run: bool | None = None, username: str | None = None) -> dict:
+        """Cập nhật cấu hình DRES runtime từ giao diện web."""
+        if base_url is not None and base_url.strip():
+            self.base_url = base_url.strip().rstrip("/")
+        if session_id is not None:
+            self._session = session_id.strip()
+        if dry_run is not None:
+            self.dry_run = bool(dry_run)
+        if username is not None:
+            self.environ["DRES_USERNAME"] = username.strip()
+        self._save_runtime_config(username=username)
+        return self.get_status()
+
+    def login(self, username: str, password: str) -> dict:
+        """Đăng nhập trực tiếp vào DRES server để lấy sessionId."""
+        if not self.base_url:
+            self.base_url = "https://aiclub.uit.edu.vn/dres"
+        if not username or not password:
+            raise ValueError("Vui lòng cung cấp username và password của đội thi")
+        login_url = self.base_url + self.profile.get("login_path", "/api/v2/login")
+        response = self._transport("POST", login_url, {}, {"username": username, "password": password}, 15)
+        if response.status_code != 200 or not isinstance(response.body, dict):
+            detail = ""
+            if isinstance(response.body, dict) and "description" in response.body:
+                detail = f": {response.body['description']}"
+            raise DresHttpError(f"Đăng nhập DRES thất bại (HTTP {response.status_code}){detail}")
+        session_id = response.body.get("sessionId")
+        if not session_id or not isinstance(session_id, str):
+            raise DresHttpError("Phản hồi từ DRES không chứa sessionId")
+        self._session = session_id
+        self.environ["DRES_USERNAME"] = username
+        self.dry_run = False
+        self._save_runtime_config(username=username)
+        return {
+            "status": "ok",
+            "username": username,
+            "session_id": session_id,
+            "role": response.body.get("role", "PARTICIPANT"),
+            "base_url": self.base_url,
+            "mode": "live",
+        }
 
     @staticmethod
     def _urllib_transport(method, url, params, body, timeout) -> DresResponse:
@@ -332,7 +427,7 @@ class DresService:
         if context["mode"] == "live":
             active = self.evaluations()["evaluations"]
             selected = next((row for row in active if row.get("id") == context["evaluation_id"]), None)
-            if selected is None or selected.get("status") != "ACTIVE" or selected.get("mock"):
+            if selected is None or str(selected.get("status", "")).upper() != "ACTIVE" or selected.get("mock"):
                 raise ValueError("Phải chọn rõ evaluation ACTIVE; không tự chọn evaluation khác")
         if context["mode"] == "mock":
             if context["evaluation_id"] != MOCK_EVALUATION_ID:

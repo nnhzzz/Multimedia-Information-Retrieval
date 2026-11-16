@@ -339,3 +339,39 @@ def test_schema_snapshot_hash_and_enum_are_pinned():
     schema = json.loads(schema_bytes)
     assert schema["components"]["schemas"]["ApiVerdictStatus"]["enum"] == list(profile["verdicts"])
     assert schema["components"]["schemas"]["ApiClientAnswer"]["properties"]["start"]["type"] == "integer"
+
+
+def test_dres_status_config_and_login(db):
+    """Kiểm tra get_status, set_config và login của DresService."""
+    calls = []
+
+    def transport(method, url, params, body, timeout):
+        calls.append((method, url, params, body))
+        if "/api/v2/login" in url:
+            if body.get("username") == "team7" and body.get("password") == "pass123":
+                return DresResponse(200, {"sessionId": "test-session-123456", "role": "PARTICIPANT"})
+            return DresResponse(401, {"description": "Sai tài khoản hoặc mật khẩu"})
+        return DresResponse(200, [])
+
+    dres = service(db, transport=transport)
+    status = dres.get_status()
+    assert status["default_server"] == "https://aiclub.uit.edu.vn/dres"
+    assert status["mode"] == "dry_run"
+    assert status["has_session"] is False
+
+    # set_config
+    updated = dres.set_config(session_id="token-abc", dry_run=False)
+    assert updated["has_session"] is True
+    assert updated["mode"] == "live"
+
+    # login thành công
+    res = dres.login("team7", "pass123")
+    assert res["status"] == "ok"
+    assert res["session_id"] == "test-session-123456"
+    assert res["mode"] == "live"
+    assert dres.get_status()["has_session"] is True
+
+    # login thất bại
+    with pytest.raises(DresHttpError):
+        dres.login("team7", "wrongpass")
+

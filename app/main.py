@@ -13,7 +13,10 @@ from . import __version__
 from .config import Settings, ROOT
 from .db import Database
 from .media import media_response
-from .schemas import SearchRequest, FeedbackRequest, CandidateRequest, SubmissionRequest, ExampleRequest, MockTaskRequest
+from .schemas import (
+    SearchRequest, FeedbackRequest, CandidateRequest, SubmissionRequest,
+    ExampleRequest, MockTaskRequest, DresConfigRequest, DresLoginRequest,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,10 +43,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if configuration.contest_mode and configuration.task_type.lower() == "video_kis":
             raise HTTPException(403, "Video KIS: hãy diễn tả bằng văn bản; truy vấn ảnh bị chặn theo profile 2024")
 
-    def invoke(function, *args):
+    def invoke(function, *args, **kwargs):
         """Chuyển lỗi adapter thành HTTP, giữ thông báo nghiệp vụ đã redact từ DRES."""
         try:
-            return function(*args)
+            return function(*args, **kwargs)
         except HTTPException:
             raise
         except PermissionError as exc:
@@ -206,6 +209,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for item in queries:
             item["request"] = json.loads(item.pop("request_json"))
         return {"queries": queries, "submissions": app.state.dres.history()}
+
+    @app.get("/api/dres/status")
+    def dres_status():
+        """Trạng thái cấu hình và kết nối DRES."""
+        return invoke(app.state.dres.get_status)
+
+    @app.post("/api/dres/config")
+    def dres_config(request: DresConfigRequest):
+        """Cập nhật URL server, session ID hoặc chế độ live/dry-run."""
+        return invoke(app.state.dres.set_config, **request.model_dump())
+
+    @app.post("/api/dres/login")
+    def dres_login(request: DresLoginRequest):
+        """Đăng nhập trực tiếp vào DRES server lấy session ID."""
+        return invoke(app.state.dres.login, request.username, request.password)
 
     @app.get("/api/dres/evaluations")
     def evaluations():

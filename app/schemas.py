@@ -118,6 +118,22 @@ class ExampleRequest(BaseModel):
     top_k: int = Field(default=24, ge=1, le=200)
 
 
+class DresConfigRequest(BaseModel):
+    """Cập nhật cấu hình DRES runtime."""
+    model_config = ConfigDict(extra="ignore")
+    base_url: str | None = None
+    session_id: str | None = None
+    dry_run: bool | None = None
+    username: str | None = None
+
+
+class DresLoginRequest(BaseModel):
+    """Đăng nhập DRES bằng username & password."""
+    model_config = ConfigDict(extra="ignore")
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
 class MockTaskRequest(BaseModel):
     """Nhãn local do người dùng khai báo; không lấy một result làm ground truth tự động."""
     task_key: str = Field(min_length=1, max_length=200)
