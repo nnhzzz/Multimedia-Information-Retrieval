@@ -2,7 +2,7 @@
 
 Dành cho Nguyễn Đức Nhật · Chuẩn bị ngày 14/10/2026
 
-Tài liệu này giải thích thiết kế mà `PROMPT_CODEX_CS336.md` yêu cầu Codex triển khai: vì sao cần từng thành phần, dữ liệu đi qua đâu, website hoạt động thế nào, DRES chấm điểm ở đâu và cần kiểm tra điều gì. Đây là giáo trình trước khi triển khai, chưa phải báo cáo một hệ thống đã chạy. Các endpoint, đường dẫn code và lệnh `app.cli` dưới đây là hợp đồng dự kiến; Codex phải hiện thực rồi cập nhật chúng theo code cuối cùng.
+Tài liệu này giải thích thiết kế tổng thể của hệ thống: vì sao cần từng thành phần, dữ liệu đi qua đâu, website hoạt động thế nào, DRES chấm điểm ở đâu và cần kiểm tra điều gì. Đây là giáo trình trước khi triển khai, chưa phải báo cáo một hệ thống đã chạy. Các endpoint, đường dẫn code và lệnh `app.cli` dưới đây là hợp đồng dự kiến; Codex phải hiện thực rồi cập nhật chúng theo code cuối cùng.
 
 Bạn có thể học ngay các phần nguyên lý. Những bài thực hành có câu lệnh của ứng dụng chỉ thực hiện sau khi Codex đã tạo dự án. Không dùng tài liệu này để khẳng định hệ thống đạt một mức Recall, tốc độ hay điểm thi cụ thể.
 

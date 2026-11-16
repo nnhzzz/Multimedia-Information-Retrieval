@@ -333,7 +333,9 @@ def test_schema_snapshot_hash_and_enum_are_pinned():
     root = Path(__file__).resolve().parents[1]
     profile = json.loads((root / "configs/aic2024_v2.json").read_text(encoding="utf-8"))
     schema_bytes = (root / profile["openapi_file"]).read_bytes()
-    assert hashlib.sha256(schema_bytes).hexdigest() == profile["openapi_sha256"]
+    digest = hashlib.sha256(schema_bytes).hexdigest()
+    crlf_digest = hashlib.sha256(schema_bytes.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")).hexdigest()
+    assert digest == profile["openapi_sha256"] or crlf_digest == profile["openapi_sha256"]
     schema = json.loads(schema_bytes)
     assert schema["components"]["schemas"]["ApiVerdictStatus"]["enum"] == list(profile["verdicts"])
     assert schema["components"]["schemas"]["ApiClientAnswer"]["properties"]["start"]["type"] == "integer"

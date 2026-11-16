@@ -12,3 +12,8 @@ frontend/test-results/
 .runtime/
 *.egg-info/
 data-fixture*/
+.DS_Store
+PROJECT_CONTEXT.md
+*.session
+*.tmp
+

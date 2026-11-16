@@ -88,6 +88,19 @@ class OpenClipEncoder:
             checkpoint = Path(open_clip.download_pretrained(config, cache_dir=str(self.cache)))
         else:
             raise EncoderUnavailable("Chưa có OpenCLIP weights local. Chạy embed --download-weights; search không tự tải.")
+        # Nếu checkpoint không có đuôi .safetensors (như resolved blob của HuggingFace),
+        # tạo symlink có đuôi .safetensors để open_clip ưu tiên dùng safetensors thay vì torch.load pickle (bị chặn trên PyTorch 2.6+).
+        if not checkpoint.suffix:
+            candidate_safetensors = checkpoint.with_suffix(".safetensors")
+            if not candidate_safetensors.exists():
+                try:
+                    from safetensors.torch import load_file
+                    load_file(checkpoint)
+                    candidate_safetensors.symlink_to(checkpoint.name)
+                except Exception:
+                    pass
+            if candidate_safetensors.exists():
+                checkpoint = candidate_safetensors
         checkpoint_hash = sha256_file(checkpoint)
         if record and record.get("checkpoint_sha256") != checkpoint_hash:
             raise EncoderUnavailable("Checksum checkpoint cache đã thay đổi; cần re-encode bằng cấu hình đã xác minh.")
@@ -116,8 +129,10 @@ class OpenClipEncoder:
         self.cache.mkdir(parents=True, exist_ok=True)
         # Các process inference/pipeline có thể cùng cache: publish record nguyên tử, tránh JSON nửa file.
         temporary = self.record_path.with_name(self.record_path.name + "." + uuid.uuid4().hex + ".tmp")
+        resolved = checkpoint.resolve()
+        save_path = str(resolved if resolved.suffix else checkpoint)
         with temporary.open("w", encoding="utf-8") as stream:
-            json.dump(dict(self.metadata, checkpoint_path=str(checkpoint.resolve())), stream, indent=2)
+            json.dump(dict(self.metadata, checkpoint_path=save_path), stream, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, self.record_path)
