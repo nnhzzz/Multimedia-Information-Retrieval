@@ -1,5 +1,5 @@
 export type Mode = 'visual_text' | 'image' | 'ocr' | 'asr' | 'hybrid' | 'temporal';
-export type Page = 'search' | 'data' | 'evaluation' | 'history';
+export type Page = 'search' | 'submit' | 'data' | 'evaluation' | 'history';
 export type JsonRecord = Record<string, unknown>;
 export interface Capabilities {
   modes: Record<Mode, boolean>;
@@ -29,6 +29,7 @@ export interface SearchResponse {
   index_version: string | null;
   query_id?: string;
   warnings?: string[];
+  translated_visual_query?: string | null;
 }
 export interface Video {
   video_uid: string;
@@ -54,6 +55,8 @@ export interface EvaluationList {
   evaluations: JsonRecord[];
   mode: 'dry_run' | 'mock' | 'live';
   profile: string;
+  session_expired?: boolean;
+  warning?: string;
 }
 export interface EvaluationResponse {
   reports: JsonRecord[];
@@ -70,13 +73,21 @@ export interface DresStatus {
   username?: string;
 }
 export interface SubmissionRequest {
-  keyframe_id: string;
-  timestamp_ms: number;
-  task_type: 'KIS' | 'QA';
+  keyframe_id?: string;
+  media_item_name?: string;
+  video_id?: string;
+  timestamp_ms?: number;
+  start_ms?: number;
+  end_ms?: number;
+  task_type?: 'KIS' | 'TKIS' | 'VKIS' | 'QA' | 'QA_TEXT' | 'ITEM' | 'CUSTOM' | string;
   answer?: string;
+  raw_text?: string;
+  custom_payload?: unknown;
   evaluation_id: string;
-  task_key: string;
+  task_key?: string;
   mode: 'dry_run' | 'mock' | 'live';
 }
 export interface PreviewResponse { payload: unknown; mode: string; profile: string; warnings?: string[] }
 export interface SubmissionResponse { attempt_id: string; status: string; payload: unknown; response?: unknown }
+export interface TranslateRequest { text: string }
+export interface TranslateResponse { original_text: string; translated_text: string; success: boolean }

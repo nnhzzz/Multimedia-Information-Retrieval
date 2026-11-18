@@ -131,3 +131,34 @@ def test_import_does_not_truncate_non_integer_timestamps(configuration, timestam
     path.write_text(json.dumps([{"video_uid": "v1", "source": "asr", "start_ms": timestamp, "end_ms": 2000, "text": "x"}]), encoding="utf-8")
     with pytest.raises(ValueError, match="integer"):
         import_text(Database(configuration.db_path), path)
+
+
+def test_api_translate_endpoint(configuration, monkeypatch):
+    """Endpoint /api/translate dịch văn bản phục vụ truy vấn tiếng Anh cho OpenCLIP."""
+    with TestClient(create_app(configuration)) as client:
+        monkeypatch.setattr("app.translator.translate_vi_to_en", lambda text: "red car" if "xe đỏ" in text else text)
+        res = client.post("/api/translate", json={"text": "xe đỏ chạy trên đường"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["original_text"] == "xe đỏ chạy trên đường"
+        assert data["translated_text"] == "red car"
+        assert data["success"] is True
+
+        # Test empty text
+        res_empty = client.post("/api/translate", json={"text": "   "})
+        assert res_empty.status_code == 200
+        assert res_empty.json()["translated_text"] == ""
+        assert res_empty.json()["success"] is False
+
+
+def test_api_search_with_auto_translate_flag(configuration):
+    """Cờ auto_translate trong search payload được chấp nhận và không làm lỗi truy vấn OCR."""
+    with TestClient(create_app(configuration)) as client:
+        res = client.post("/api/search", json={"mode": "ocr", "query": "xe", "top_k": 5, "auto_translate": True})
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["results"]) > 0
+        assert data["results"][0]["keyframe_id"] in ("k1", "k2")
+
+
+

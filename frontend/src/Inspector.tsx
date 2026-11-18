@@ -5,11 +5,46 @@ import { SubmissionPanel } from './SubmissionPanel';
 import type { EvaluationList, SearchResult } from './types';
 
 /** Seek bằng ms / 1000 sau loadedmetadata; hủy listener và request cũ khi đổi kết quả. */
-export function Inspector({ selected, evaluations, saved, feedback, imageAvailable, onClose, onSelect, onSave, onFeedback, onExample, onSubmitted, initialTaskKey, initialTaskType, initialEvaluationId }: {
-  selected: SearchResult; evaluations: EvaluationList | null; saved: boolean; feedback?: boolean; imageAvailable: boolean;
-  onClose: () => void; onSelect: (result: SearchResult) => void; onSave: (result: SearchResult) => void;
-  onFeedback: (result: SearchResult, relevant: boolean) => void; onExample: (result: SearchResult) => void; onSubmitted: () => void;
-  initialTaskKey?: string; initialTaskType?: 'KIS' | 'QA'; initialEvaluationId?: string;
+export function Inspector({
+  selected,
+  evaluations,
+  saved,
+  feedback,
+  imageAvailable,
+  onClose,
+  onSelect,
+  onSave,
+  onFeedback,
+  onExample,
+  onSubmitted,
+  initialTaskKey,
+  initialTaskType,
+  initialEvaluationId,
+  initialMode,
+  onTaskKeyChange,
+  onTaskTypeChange,
+  onEvaluationIdChange,
+  onModeChange,
+}: {
+  selected: SearchResult;
+  evaluations: EvaluationList | null;
+  saved: boolean;
+  feedback?: boolean;
+  imageAvailable: boolean;
+  onClose: () => void;
+  onSelect: (result: SearchResult) => void;
+  onSave: (result: SearchResult) => void;
+  onFeedback: (result: SearchResult, relevant: boolean) => void;
+  onExample: (result: SearchResult) => void;
+  onSubmitted: () => void;
+  initialTaskKey?: string;
+  initialTaskType?: 'KIS' | 'QA';
+  initialEvaluationId?: string;
+  initialMode?: 'dry_run' | 'mock' | 'live';
+  onTaskKeyChange?: (key: string) => void;
+  onTaskTypeChange?: (type: 'KIS' | 'QA') => void;
+  onEvaluationIdChange?: (id: string) => void;
+  onModeChange?: (mode: 'dry_run' | 'mock' | 'live') => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [neighbors, setNeighbors] = useState<SearchResult[]>([]);
@@ -61,6 +96,11 @@ export function Inspector({ selected, evaluations, saved, feedback, imageAvailab
       initialTaskKey={initialTaskKey}
       initialTaskType={initialTaskType}
       initialEvaluationId={initialEvaluationId}
+      initialMode={initialMode}
+      onTaskKeyChange={onTaskKeyChange}
+      onTaskTypeChange={onTaskTypeChange}
+      onEvaluationIdChange={onEvaluationIdChange}
+      onModeChange={onModeChange}
     />
   </aside>;
 }

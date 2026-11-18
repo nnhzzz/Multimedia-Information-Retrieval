@@ -97,6 +97,13 @@ export function DresModal({ isOpen, onClose, status, onUpdated }: DresModalProps
             <span>Địa chỉ server chính thức được cấu hình: <code>https://aiclub.uit.edu.vn/dres</code></span>
           </div>
 
+          {status?.mode === 'live' && !status?.has_session && (
+            <div className="dres-alert error" style={{ margin: '10px 0 14px' }}>
+              <Icon name="info" size={16} />
+              <span>Phiên làm việc DRES trước đó đã hết hạn hoặc chưa đăng nhập. Vui lòng nhập mật khẩu tài khoản để đăng nhập lại.</span>
+            </div>
+          )}
+
           <div className="form-row">
             <label>
               Địa chỉ DRES Server

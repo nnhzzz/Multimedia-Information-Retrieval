@@ -16,6 +16,7 @@ from .media import media_response
 from .schemas import (
     SearchRequest, FeedbackRequest, CandidateRequest, SubmissionRequest,
     ExampleRequest, MockTaskRequest, DresConfigRequest, DresLoginRequest,
+    TranslateRequest,
 )
 
 
@@ -119,6 +120,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.perf_counter()
         result = invoke(app.state.retrieval.search_example, request.keyframe_id, request.top_k)
         return remember({"mode": "image", **request.model_dump()}, result, started)
+
+    @app.post("/api/translate")
+    def translate(request: TranslateRequest):
+        """Dịch text sang tiếng Anh cho OpenCLIP visual query."""
+        from .translator import translate_vi_to_en
+        text = request.text.strip()
+        translated = translate_vi_to_en(text)
+        return {
+            "original_text": text,
+            "translated_text": translated,
+            "success": bool(translated),
+        }
 
     @app.get("/api/media/video/{video_uid}")
     def video(video_uid: str):
@@ -229,6 +242,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def evaluations():
         """Adapter trả evaluation mock/dry-run khi live chưa được bật có chủ ý."""
         return invoke(app.state.dres.evaluations)
+
+    @app.get("/api/dres/current-task/{evaluation_id}")
+    def dres_current_task(evaluation_id: str):
+        """Thông tin task hiện tại đang mở trong evaluation từ DRES."""
+        return invoke(app.state.dres.current_task, evaluation_id)
 
     @app.post("/api/dres/preview")
     def preview(request: SubmissionRequest):

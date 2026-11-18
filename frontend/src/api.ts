@@ -31,8 +31,10 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Có lỗi khi kết nối. Hãy thử lại.';
 }
 
-/** Giữ nguyên chuỗi QA, bao gồm số 0 đầu; chỉ chấp nhận chữ số ASCII. */
-export function validQa(answer: string): boolean { return /^[0-9]+$/.test(answer); }
+/** Giữ nguyên chuỗi QA (chữ hoặc số, bảo toàn số 0 đầu); từ chối chuỗi rỗng hoặc có ký tự xuống dòng. */
+export function validQa(answer: string): boolean {
+  return typeof answer === 'string' && answer.trim().length > 0 && !/[\r\n]/.test(answer);
+}
 
 export function field(record: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) if (record[key] !== undefined && record[key] !== null) return String(record[key]);

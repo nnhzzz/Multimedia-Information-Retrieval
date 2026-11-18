@@ -184,3 +184,58 @@ def test_new_extraction_invalidates_visual_readiness_until_reindex(service):
         service.search({"mode": "visual_text", "query": "red"})
     service.db.execute("INSERT INTO jobs(job_id,kind,status) VALUES('index-new','index','completed')")
     assert service.capabilities()["modes"]["visual_text"] is True
+
+
+def test_retrieval_auto_translate_visual(service, monkeypatch):
+    """Khi auto_translate=True và visual_query rỗng, query được tự động dịch sang tiếng Anh."""
+    monkeypatch.setattr("app.translator.translate_vi_to_en", lambda text: "red car on bridge" if "xe đỏ" in text else text)
+    result = service.search({"mode": "visual_text", "query": "xe đỏ qua cầu", "auto_translate": True, "top_k": 3})
+    assert result.get("translated_visual_query") == "red car on bridge"
+    assert len(result["results"]) > 0
+
+
+def test_retrieval_explicit_visual_query_takes_precedence(service, monkeypatch):
+    """Khi người dùng đã chỉ định visual_query, auto_translate không được ghi đè."""
+    monkeypatch.setattr("app.translator.translate_vi_to_en", lambda text: "unexpected translated text")
+    result = service.search({
+        "mode": "visual_text",
+        "query": "xe đỏ",
+        "visual_query": "explicit english query",
+        "auto_translate": True,
+        "top_k": 3,
+    })
+    assert "translated_visual_query" not in result
+
+
+def test_retrieval_auto_translate_temporal_both_events(service, monkeypatch):
+    """Trong temporal mode, cả event A và event B đều được dịch sang tiếng Anh cho nhánh visual."""
+    translated_events = []
+
+    def mock_translate(text):
+        translated_events.append(text)
+        return f"translated_{text}"
+
+    monkeypatch.setattr("app.translator.translate_vi_to_en", mock_translate)
+    result = service.search({
+        "mode": "temporal",
+        "query": "sự kiện một",
+        "query_b": "sự kiện hai",
+        "auto_translate": True,
+        "min_gap_ms": 1,
+        "max_gap_ms": 30000,
+        "top_k": 3,
+    })
+    assert "sự kiện một" in translated_events
+    assert "sự kiện hai" in translated_events
+    assert result.get("translated_visual_query") == "translated_sự kiện một"
+
+
+def test_retrieval_query_validation(service):
+    """Kiểm tra validation query rỗng và temporal thiếu query_b."""
+    with pytest.raises(ValueError, match="Query không được rỗng"):
+        service.search({"mode": "visual_text", "query": ""})
+    with pytest.raises(ValueError, match="Query không được rỗng"):
+        service.search({"mode": "visual_text", "query": "   \n\t  "})
+    with pytest.raises(ValueError, match="Temporal cần query_b"):
+        service.search({"mode": "temporal", "query": "valid query", "query_b": "   "})
+

@@ -3,8 +3,9 @@ import { api, errorMessage, extractCandidates, field, formatTime, getFeedbackSes
 import { Icon } from './icons';
 import { Inspector } from './Inspector';
 import { DresModal } from './DresModal';
+import { DresSubmissionHub } from './DresSubmissionHub';
 import { DataPage, EvaluationPage, HistoryPage } from './Pages';
-import type { Capabilities, DataResponse, DresStatus, EvaluationList, EvaluationResponse, HistoryResponse, JsonRecord, Mode, Page, SearchResponse, SearchResult } from './types';
+import type { Capabilities, DataResponse, DresStatus, EvaluationList, EvaluationResponse, HistoryResponse, JsonRecord, Mode, Page, SearchResponse, SearchResult, TranslateResponse } from './types';
 
 const modes: { id: Mode; label: string; icon: string; hint: string }[] = [
   { id: 'visual_text', label: 'Thị giác', icon: 'text', hint: 'Mô tả hình ảnh, đối tượng và hành động. Với CLIP tiếng Anh, bạn có thể nhập mô tả visual riêng.' },
@@ -15,8 +16,11 @@ const modes: { id: Mode; label: string; icon: string; hint: string }[] = [
   { id: 'image', label: 'Ảnh mẫu', icon: 'image', hint: 'Chỉ áp dụng Top-k cho truy vấn ảnh. Không tải ảnh clip đề trong chế độ thi Video KIS.' },
 ];
 const navigation: { id: Page; label: string; icon: string }[] = [
-  { id: 'search', label: 'Truy vấn video', icon: 'search' }, { id: 'data', label: 'Dữ liệu & index', icon: 'database' },
-  { id: 'evaluation', label: 'Đánh giá', icon: 'chart' }, { id: 'history', label: 'Lịch sử', icon: 'history' },
+  { id: 'search', label: 'Truy vấn video', icon: 'search' },
+  { id: 'submit', label: 'Nộp bài DRES', icon: 'send' },
+  { id: 'data', label: 'Dữ liệu & index', icon: 'database' },
+  { id: 'evaluation', label: 'Đánh giá', icon: 'chart' },
+  { id: 'history', label: 'Lịch sử', icon: 'history' },
 ];
 
 /** Không gian nghiên cứu video: trạng thái capability và kết quả đều đến từ backend thật. */
@@ -30,6 +34,27 @@ export default function App() {
   const [contestTaskKey, setContestTaskKey] = useState(() => localStorage.getItem('cs336-task-key') || 'round-01');
   const [contestTaskType, setContestTaskType] = useState<'KIS' | 'QA'>(() => (localStorage.getItem('cs336-task-type') as 'KIS' | 'QA') || 'KIS');
   const [contestEvalId, setContestEvalId] = useState(() => localStorage.getItem('cs336-eval-id') || '');
+  const [contestSubmitMode, setContestSubmitMode] = useState<'dry_run' | 'mock' | 'live'>(() => {
+    const saved = localStorage.getItem('cs336-submit-mode');
+    return (saved === 'dry_run' || saved === 'mock' || saved === 'live') ? saved : 'dry_run';
+  });
+
+  const updateContestTaskKey = (val: string) => {
+    setContestTaskKey(val);
+    localStorage.setItem('cs336-task-key', val);
+  };
+  const updateContestTaskType = (val: 'KIS' | 'QA') => {
+    setContestTaskType(val);
+    localStorage.setItem('cs336-task-type', val);
+  };
+  const updateContestEvalId = (val: string) => {
+    setContestEvalId(val);
+    localStorage.setItem('cs336-eval-id', val);
+  };
+  const updateContestSubmitMode = (val: 'dry_run' | 'mock' | 'live') => {
+    setContestSubmitMode(val);
+    localStorage.setItem('cs336-submit-mode', val);
+  };
   const [evaluation, setEvaluation] = useState<EvaluationResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [candidates, setCandidates] = useState<SearchResult[]>([]);
@@ -39,6 +64,8 @@ export default function App() {
   const [mode, setMode] = useState<Mode>('visual_text');
   const [query, setQuery] = useState('');
   const [visualQuery, setVisualQuery] = useState('');
+  const [autoTranslate, setAutoTranslate] = useState(() => localStorage.getItem('cs336-auto-translate') !== 'false');
+  const [translating, setTranslating] = useState(false);
   const [queryB, setQueryB] = useState('');
   const [topK, setTopK] = useState(24);
   const [batch, setBatch] = useState('');
@@ -96,12 +123,19 @@ export default function App() {
     if (library.status === 'fulfilled') setData(library.value);
     if (dres.status === 'fulfilled') {
       setEvaluations(dres.value);
-      if (!contestEvalId && dres.value.evaluations.length > 0) {
-        const activeEval = dres.value.evaluations.find(e => field(e, 'status', 'state').toUpperCase() === 'ACTIVE') || dres.value.evaluations[0];
-        if (activeEval) {
-          const autoId = field(activeEval, 'id', 'evaluation_id', 'evaluationId');
-          setContestEvalId(autoId);
-          localStorage.setItem('cs336-eval-id', autoId);
+      const allEvals = dres.value.evaluations || [];
+      if (allEvals.length > 0) {
+        const savedEvalId = localStorage.getItem('cs336-eval-id') || contestEvalId;
+        const exists = allEvals.some(e => field(e, 'id', 'evaluation_id', 'evaluationId') === savedEvalId);
+        if (exists && savedEvalId) {
+          if (contestEvalId !== savedEvalId) setContestEvalId(savedEvalId);
+        } else {
+          const activeEval = allEvals.find(e => field(e, 'status', 'state').toUpperCase() === 'ACTIVE') || allEvals[0];
+          if (activeEval) {
+            const autoId = field(activeEval, 'id', 'evaluation_id', 'evaluationId');
+            setContestEvalId(autoId);
+            localStorage.setItem('cs336-eval-id', autoId);
+          }
         }
       }
     }
@@ -109,7 +143,13 @@ export default function App() {
     if (past.status === 'fulfilled') setHistory(past.value);
     if (saved.status === 'fulfilled') setCandidates(extractCandidates(saved.value));
     if (labels.status === 'fulfilled' && Array.isArray(labels.value.feedback) && feedbackRevision.current === feedbackVersion) setFeedback(Object.fromEntries(labels.value.feedback.map(item => [item.keyframe_id, item.relevant])));
-    if (dresStat.status === 'fulfilled') setDresStatus(dresStat.value);
+    if (dresStat.status === 'fulfilled') {
+      setDresStatus(dresStat.value);
+      if (!localStorage.getItem('cs336-submit-mode') && dresStat.value.mode === 'live' && dresStat.value.has_session) {
+        setContestSubmitMode('live');
+        localStorage.setItem('cs336-submit-mode', 'live');
+      }
+    }
     setBootErrors(responses.slice(0, 8).flatMap((item, i) => item.status === 'rejected' ? [`${['Health', 'Capabilities', 'Dữ liệu', 'DRES', 'Đánh giá', 'Lịch sử', 'Ứng viên', 'Feedback'][i]}: ${errorMessage(item.reason)}`] : []));
     setBootLoading(false);
   }, [feedbackSession, contestEvalId]);
@@ -137,6 +177,19 @@ export default function App() {
     : mode === 'temporal' && (minGap <= 0 || maxGap < minGap || !Number.isInteger(minGap) || !Number.isInteger(maxGap)) ? 'Khoảng cách A → B phải là số nguyên dương, max ≥ min.' : '';
   const canSearch = available && !validationError && (mode === 'image' ? Boolean(imageFile) : query.trim() !== '' && (mode !== 'temporal' || queryB.trim() !== ''));
 
+  async function handleManualTranslate() {
+    if (!query.trim() || translating) return;
+    setTranslating(true); setActionError('');
+    try {
+      const res = await post<TranslateResponse>('/api/translate', { text: query.trim() });
+      if (res.translated_text) {
+        setVisualQuery(res.translated_text);
+        setToast('Đã dịch câu truy vấn sang tiếng Anh cho nhánh visual.');
+      }
+    } catch (reason) { setActionError(errorMessage(reason)); }
+    finally { setTranslating(false); }
+  }
+
   async function search(example?: SearchResult) {
     if ((!example && !canSearch) || (example && !imageAvailable)) return;
     searchController.current?.abort();
@@ -150,6 +203,7 @@ export default function App() {
         result = await api<SearchResponse>(`/api/search/image?top_k=${topK}`, { method: 'POST', body: form, signal: controller.signal });
       } else result = await post<SearchResponse>('/api/search', {
         mode, query: query.trim(), ...(visualQuery.trim() && (mode === 'visual_text' || mode === 'hybrid') ? { visual_query: visualQuery.trim() } : {}),
+        auto_translate: autoTranslate,
         ...(mode === 'temporal' ? { query_b: queryB.trim() } : {}), top_k: topK,
         video_uids: videoUid ? [videoUid] : batch ? filteredVideos.map(item => item.video_uid) : [],
         ...(startMs !== '' ? { start_ms: Number(startMs) } : {}), ...(endMs !== '' ? { end_ms: Number(endMs) } : {}),
@@ -217,23 +271,23 @@ export default function App() {
       <main id="main-content">
         {bootErrors.length > 0 && <div className="connection-banner" role="alert"><Icon name="info" size={18} /><div><strong>Một phần dữ liệu chưa tải được.</strong><details><summary>Xem lỗi kết nối</summary>{bootErrors.map((error, i) => <p key={i}>{error}</p>)}</details></div><button className="button text-button" onClick={() => void refresh()}>Kết nối lại <Icon name="refresh" size={15} /></button></div>}
         {capabilities?.fixture && <div className="fixture-banner"><Icon name="info" size={16} /> Đang dùng fixture để kiểm thử tích hợp. Kết quả này không đại diện chất lượng retrieval trên dataset thật.</div>}
-        {page === 'search' ? <div className="search-page"><div className="contest-quick-bar"><div className="contest-bar-group"><span className="contest-bar-label"><Icon name="zap" size={13} /> VÒNG THI:</span><input className="contest-task-input" value={contestTaskKey} onChange={e => { setContestTaskKey(e.target.value); localStorage.setItem('cs336-task-key', e.target.value); }} placeholder="Task / Round Key" title="Mã Task/Round thi đấu (vd: round-01, KIS_01)" /></div><div className="contest-bar-group"><select className="contest-type-select" value={contestTaskType} onChange={e => { const val = e.target.value as 'KIS' | 'QA'; setContestTaskType(val); localStorage.setItem('cs336-task-type', val); }} title="Dạng truy vấn thi đấu"><option value="KIS">🎯 KIS (Textual / Video)</option><option value="QA">❓ Q&amp;A (Chuỗi 0-9)</option></select></div><div className="contest-bar-group"><select className="contest-eval-select" value={contestEvalId} onChange={e => { setContestEvalId(e.target.value); localStorage.setItem('cs336-eval-id', e.target.value); }} title="Phiên đánh giá DRES"><option value="">Chọn Evaluation...</option>{evaluations?.evaluations?.map((ev, i) => <option key={i} value={field(ev, 'id', 'evaluation_id', 'evaluationId')}>{field(ev, 'name', 'title', 'id')} · {field(ev, 'status', 'state')}</option>)}</select></div><button type="button" className="button text-button contest-settings-btn" onClick={() => setShowDresModal(true)}><Icon name="settings" size={13} /> Cấu hình DRES ({dresStatus?.base_url?.replace(/^https?:\/\//, '') || 'aiclub.uit.edu.vn'})</button></div><div className="page-intro"><div><span className="eyebrow">TRUY VẤN SỰ KIỆN TRONG VIDEO</span><h1>Tìm đúng <span>khoảnh khắc.</span></h1><p className="muted">Mô tả điều bạn đang tìm. Kiểm tra khung hình và thời điểm trong video gốc.</p></div><div className="library-indicator"><Icon name="database" size={19} /><div><strong>{data ? `${data.counts.videos.toLocaleString('vi-VN')} video` : 'Kho dữ liệu'}</strong><small>{data ? `${data.counts.keyframes.toLocaleString('vi-VN')} keyframe đã đăng ký` : 'Đang chờ backend'}</small></div></div></div>
+        {page === 'search' ? <div className="search-page"><div className="contest-quick-bar"><div className="contest-bar-group"><span className="contest-bar-label"><Icon name="zap" size={13} /> VÒNG THI:</span><input className="contest-task-input" value={contestTaskKey} onChange={e => updateContestTaskKey(e.target.value)} placeholder="Task / Round Key" title="Mã Task/Round thi đấu (vd: round-01, KIS_01)" /></div><div className="contest-bar-group"><select className="contest-type-select" value={contestTaskType} onChange={e => updateContestTaskType(e.target.value as 'KIS' | 'QA')} title="Dạng truy vấn thi đấu (KIS hoặc QA)"><option value="KIS">🎯 KIS (Textual / Video)</option><option value="QA">❓ Q&amp;A (Chữ / Số)</option></select></div><div className="contest-bar-group"><select className={`contest-mode-select ${contestSubmitMode === 'live' ? 'live' : ''}`} value={contestSubmitMode} onChange={e => updateContestSubmitMode(e.target.value as 'dry_run' | 'mock' | 'live')} title="Chế độ nộp bài (Dry run / Mock / Live)"><option value="dry_run">🧪 Dry Run</option><option value="mock">🎯 Mock Luyện tập</option><option value="live">⚡ Live Thi Đấu</option></select></div><div className="contest-bar-group"><select className="contest-eval-select" value={contestEvalId} onChange={e => updateContestEvalId(e.target.value)} title="Phiên đánh giá DRES"><option value="">Chọn Evaluation...</option>{evaluations?.evaluations?.map((ev, i) => <option key={i} value={field(ev, 'id', 'evaluation_id', 'evaluationId')}>{field(ev, 'name', 'title', 'id')} · {field(ev, 'status', 'state')}</option>)}</select></div>{evaluations?.session_expired && dresStatus?.mode === 'live' && <button type="button" className="contest-session-expired-pill" onClick={() => setShowDresModal(true)} title="Phiên DRES hết hạn - Bấm để đăng nhập lại">⚠️ Phiên DRES hết hạn (Đăng nhập lại)</button>}<button type="button" className="button primary small contest-hub-nav-btn" onClick={() => setPage('submit')} title="Mở Trung tâm Nộp bài DRES chuyên dụng (Đa dạng KIS/QA)"><Icon name="send" size={13} /> Nộp bài DRES</button><button type="button" className="button text-button contest-settings-btn" onClick={() => setShowDresModal(true)}><Icon name="settings" size={13} /> Cấu hình DRES ({dresStatus?.base_url?.replace(/^https?:\/\//, '') || 'aiclub.uit.edu.vn'})</button></div><div className="page-intro"><div><span className="eyebrow">TRUY VẤN SỰ KIỆN TRONG VIDEO</span><h1>Tìm đúng <span>khoảnh khắc.</span></h1><p className="muted">Mô tả điều bạn đang tìm. Kiểm tra khung hình và thời điểm trong video gốc.</p></div><div className="library-indicator"><Icon name="database" size={19} /><div><strong>{data ? `${data.counts.videos.toLocaleString('vi-VN')} video` : 'Kho dữ liệu'}</strong><small>{data ? `${data.counts.keyframes.toLocaleString('vi-VN')} keyframe đã đăng ký` : 'Đang chờ backend'}</small></div></div></div>
           <section className="search-panel panel" aria-label="Tìm kiếm video"><div className="mode-tabs" role="tablist" aria-label="Kênh truy vấn">{modes.map(item => { const enabled = item.id === 'image' ? imageAvailable : capabilities?.modes[item.id]; return <button role="tab" aria-selected={mode === item.id} key={item.id} className={`${mode === item.id ? 'active' : ''} ${!enabled ? 'unavailable' : ''}`} onClick={() => setMode(item.id)} title={enabled ? item.hint : capabilities?.reasons[item.id] ?? 'Chưa sẵn sàng'}><Icon name={item.icon} size={17} />{item.label}{!enabled && <span className="mode-status" aria-label="chưa sẵn sàng" />}</button>; })}</div>
             <form onSubmit={event => { event.preventDefault(); void search(); }}><div className="query-area">{mode === 'image' ? <div className="image-upload"><input id="query-image" type="file" accept="image/png,image/jpeg,image/webp" disabled={!imageAvailable} onChange={event => { const file = event.target.files?.[0] ?? null; if (file && (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024)) { setSearchError('Chọn ảnh PNG, JPEG hoặc WebP tối đa 10 MiB.'); event.target.value = ''; return; } setSearchError(''); setImageFile(file); }} />{imagePreview ? <img src={imagePreview} alt="Ảnh truy vấn do bạn chọn" /> : <Icon name="upload" size={30} />}<label htmlFor="query-image">{imageFile ? imageFile.name : 'Chọn ảnh mẫu từ máy'}<small>PNG, JPEG, WebP · tối đa 10 MiB</small></label></div> : <><label className="query-label" htmlFor="main-query">{mode === 'temporal' ? 'Sự kiện A' : 'Nội dung truy vấn'}</label><div className="query-input-wrap"><Icon name="search" size={23} /><textarea ref={searchInput} id="main-query" value={query} onChange={event => setQuery(event.target.value)} placeholder={mode === 'ocr' ? 'Nhập chữ xuất hiện trong hình, ví dụ: “thành phố”' : mode === 'asr' ? 'Nhập từ hoặc cụm từ được nói trong video…' : 'Một người đi xe đạp qua cây cầu vào buổi sáng…'} rows={2} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void search(); } }} /><button className="button primary search-button" disabled={!canSearch} type="submit">{searchLoading ? <span className="spinner" /> : <Icon name="arrow" size={20} />}<span>{searchLoading ? 'Tìm lại' : 'Tìm kiếm'}</span></button></div></>}
               {mode === 'image' && <button type="submit" className="button primary" disabled={!canSearch}><Icon name="search" />Tìm bằng ảnh</button>}
-              {(mode === 'visual_text' || mode === 'hybrid') && <div className="visual-query"><label htmlFor="visual-query"><span className="language-badge">EN</span>Mô tả visual tiếng Anh <span className="muted">· tùy chọn, nhập riêng</span></label><input id="visual-query" value={visualQuery} onChange={event => setVisualQuery(event.target.value)} placeholder="A person riding a bicycle across a bridge in the morning" /></div>}
+              {(mode === 'visual_text' || mode === 'hybrid') && <div className="visual-query"><div className="visual-query-header"><label htmlFor="visual-query"><span className="language-badge">EN</span>Mô tả visual tiếng Anh <span className="muted">· tùy chọn hoặc tự động dịch</span></label><div className="visual-translate-tools"><label className="auto-translate-checkbox" title="Tự động dịch sang tiếng Anh cho OpenCLIP khi bỏ trống ô này"><input type="checkbox" checked={autoTranslate} onChange={e => { setAutoTranslate(e.target.checked); localStorage.setItem('cs336-auto-translate', String(e.target.checked)); }} /><span>Auto-translate (Vi → EN)</span></label><button type="button" className="button text-button manual-translate-btn" onClick={() => void handleManualTranslate()} disabled={translating || !query.trim()} title="Dịch ngay câu truy vấn sang tiếng Anh">{translating ? <span className="spinner small" /> : <Icon name="refresh" size={12} />}<span>Dịch sang EN</span></button></div></div><input id="visual-query" value={visualQuery} onChange={event => setVisualQuery(event.target.value)} placeholder={autoTranslate ? "Tự động dịch từ truy vấn nếu để trống, hoặc nhập tiếng Anh đè tại đây..." : "A person riding a bicycle across a bridge in the morning"} /></div>}
               {mode === 'temporal' && <div className="temporal-inputs"><label>Sự kiện B<textarea value={queryB} onChange={event => setQueryB(event.target.value)} placeholder="Điều gì xảy ra tiếp theo?" rows={2} /></label><div className="form-row"><label>Khoảng cách tối thiểu (ms)<input type="number" min="1" step="1" value={minGap} onChange={event => setMinGap(Number(event.target.value))} /></label><label>Khoảng cách tối đa (ms)<input type="number" min="1" step="1" value={maxGap} onChange={event => setMaxGap(Number(event.target.value))} /></label></div></div>}
               <div className="query-hint"><Icon name="info" size={14} /><span>{available ? activeMode.hint : capabilities?.reasons[mode] ?? (capabilities ? 'Kênh này chưa sẵn sàng. Kiểm tra dữ liệu và index.' : 'Đang kiểm tra capabilities từ backend.')}</span></div>
             </div><div className="filter-toolbar"><label className="compact-select"><Icon name="filter" size={16} /><select value={batch} onChange={event => { setBatch(event.target.value); setVideoUid(''); }} aria-label="Lọc batch"><option value="">Tất cả batch</option>{batches.map(item => <option key={item} value={item}>{item}</option>)}</select></label><label className="compact-select"><Icon name="play" size={15} /><select value={videoUid} onChange={event => setVideoUid(event.target.value)} aria-label="Lọc video"><option value="">Tất cả video</option>{filteredVideos.map(item => <option key={item.video_uid} value={item.video_uid}>{item.media_item_name}</option>)}</select></label><label className="compact-select">Top<select value={topK} onChange={event => setTopK(Number(event.target.value))} aria-label="Top k">{[12, 24, 48, 100, 200].map(value => <option key={value}>{value}</option>)}</select></label><label className="checkbox-label"><input type="checkbox" checked={groupByVideo} onChange={event => setGroupByVideo(event.target.checked)} /> Nhóm theo video</label></div>
             <details className="advanced-filters"><summary><Icon name="filter" size={15} /> Bộ lọc & điều chỉnh nâng cao <Icon name="chevron" size={14} /></summary><div className="advanced-body"><div className="form-row"><label>Từ thời điểm (ms)<input type="number" min="0" step="1" value={startMs} onChange={event => setStartMs(event.target.value)} placeholder="Không giới hạn" /></label><label>Đến thời điểm (ms)<input type="number" min="0" step="1" value={endMs} onChange={event => setEndMs(event.target.value)} placeholder="Không giới hạn" /></label></div><label>Từ mở rộng <span className="muted">(phân cách bằng dấu phẩy)</span><input value={expansion} onChange={event => setExpansion(event.target.value)} placeholder="Các từ bạn muốn bổ sung, không tự dịch" /></label>{mode === 'hybrid' && <div className="form-row weights-row">{Object.entries(weights).map(([name, weight]) => <label key={name}>Trọng số {name}<input type="number" min="0" max="10" step="0.1" value={weight} onChange={event => setWeights(current => ({ ...current, [name]: Number(event.target.value) }))} /></label>)}</div>}<div className="feedback-settings"><label className="checkbox-label"><input type="checkbox" checked={useFeedback} onChange={event => setUseFeedback(event.target.checked)} /> Dùng relevance feedback ({Object.keys(feedback).length} nhãn)</label><button className="button text-button" type="button" disabled={!Object.keys(feedback).length} onClick={() => void resetFeedback()}>Xóa feedback</button></div>{mode === 'image' && <p className="small warning">API ảnh chỉ áp dụng top-k. Bộ lọc thời gian, video và feedback ở trên dành cho truy vấn văn bản.</p>}</div></details>
           </form>{validationError && <div role="alert" className="inline-error">{validationError}</div>}</section>
           {searchError && <div className="error-banner" role="alert"><Icon name="info" /><div><strong>Chưa thực hiện được truy vấn</strong><p>{searchError}</p>{results.length > 0 && <p className="small">Lưới bên dưới vẫn là kết quả của truy vấn trước: {resultQuery}.</p>}</div></div>}{actionError && <div className="error-banner" role="alert"><Icon name="info" /><span>{actionError}</span><button className="icon-button" aria-label="Ẩn lỗi" onClick={() => setActionError('')}><Icon name="close" /></button></div>}
-          <div className="results-toolbar"><div className="view-tabs"><button className={view === 'results' ? 'active' : ''} onClick={() => setView('results')}><Icon name="grid" size={17} />Kết quả{searched && <span>{results.length}</span>}</button><button className={view === 'candidates' ? 'active' : ''} onClick={() => setView('candidates')}><Icon name="bookmark" size={17} />Ứng viên<span>{candidates.length}</span></button></div><div className="results-meta">{searchLoading ? <span role="status"><span className="spinner dark" /> Đang truy vấn…</span> : response && view === 'results' ? <><Icon name="clock" size={14} />{response.elapsed_ms.toFixed(0)} ms<span className="meta-divider">·</span><span title={response.index_version ?? ''}>Index {response.index_version ?? 'text'}</span></> : <span>Thumbnail & mốc thời gian gốc</span>}</div></div>
+          <div className="results-toolbar"><div className="view-tabs"><button className={view === 'results' ? 'active' : ''} onClick={() => setView('results')}><Icon name="grid" size={17} />Kết quả{searched && <span>{results.length}</span>}</button><button className={view === 'candidates' ? 'active' : ''} onClick={() => setView('candidates')}><Icon name="bookmark" size={17} />Ứng viên<span>{candidates.length}</span></button></div><div className="results-meta">{searchLoading ? <span role="status"><span className="spinner dark" /> Đang truy vấn…</span> : response && view === 'results' ? <>{response.translated_visual_query && <span className="meta-badge-translated" title={`Đã tự động dịch cho nhánh visual: "${response.translated_visual_query}"`}><Icon name="zap" size={12} /> Visual EN: <em>{response.translated_visual_query}</em><span className="meta-divider">·</span></span>}<Icon name="clock" size={14} />{response.elapsed_ms.toFixed(0)} ms<span className="meta-divider">·</span><span title={response.index_version ?? ''}>Index {response.index_version ?? 'text'}</span></> : <span>Thumbnail & mốc thời gian gốc</span>}</div></div>
           {response?.warnings?.map((warning, i) => <p className="warning small" key={i}>{warning}</p>)}
           <div className={`results-workspace ${selected ? 'has-selection' : ''}`}><section className="results-region" aria-label="Kết quả truy vấn" aria-busy={searchLoading}>
             {searchLoading ? <div className="result-grid skeleton-grid">{Array.from({ length: 6 }, (_, i) => <div className="result-skeleton panel" key={i}><div /><span /><span /></div>)}</div> : displayedResults.length ? <><div className="result-grid">{displayedResults.slice(0, resultLimit).map((result, i) => <ResultCard key={`${result.keyframe_id}-${i}`} result={result} rank={view === 'results' ? i + 1 : undefined} selected={selected?.keyframe_id === result.keyframe_id} saved={candidates.some(item => item.keyframe_id === result.keyframe_id)} feedback={feedback[result.keyframe_id]} onSelect={() => setSelected(result)} onSave={() => void saveCandidate(result)} />)}</div>{displayedResults.length > resultLimit && <button className="button secondary load-more" onClick={() => setResultLimit(value => value + 24)}>Xem thêm {Math.min(24, displayedResults.length - resultLimit)} keyframe</button>}</> : <div className="empty-state results-empty"><div className="empty-frame"><span /><Icon name={view === 'candidates' ? 'bookmark' : 'search'} size={32} /><span /></div><span className="eyebrow">{view === 'candidates' ? 'DANH SÁCH ỨNG VIÊN' : searched ? 'KẾT QUẢ TRUY VẤN' : 'SẴN SÀNG KHÁM PHÁ'}</span><h2>{view === 'candidates' ? 'Giữ lại những khoảnh khắc đáng chú ý.' : searched ? 'Chưa tìm thấy khung hình phù hợp.' : 'Một mô tả. Một khoảnh khắc.'}</h2><p>{view === 'candidates' ? 'Bấm biểu tượng lưu trên kết quả để tạo danh sách ứng viên. Danh sách được lưu trên backend và giữ sau khi tải lại trang.' : searched ? 'Thử điều chỉnh mô tả, chọn kênh có dữ liệu hoặc mở rộng bộ lọc thời gian và video.' : 'Nhập câu truy vấn phía trên để tìm khung hình. Chọn kết quả để xem video đúng thời điểm, đánh dấu liên quan và chuẩn bị đáp án.'}</p>{!searched && view === 'results' && <div className="empty-workflow"><span><b>01</b> Mô tả sự kiện</span><Icon name="arrow" size={16} /><span><b>02</b> Kiểm tra video</span><Icon name="arrow" size={16} /><span><b>03</b> Lưu & đánh giá</span></div>}</div>}
-          </section>{selected && <Inspector selected={selected} evaluations={evaluations} saved={candidates.some(item => item.keyframe_id === selected.keyframe_id)} feedback={feedback[selected.keyframe_id]} imageAvailable={imageAvailable} onClose={() => setSelected(null)} onSelect={setSelected} onSave={result => void saveCandidate(result)} onFeedback={(result, relevant) => void markFeedback(result, relevant)} onExample={result => void search(result)} onSubmitted={() => void refresh()} initialTaskKey={contestTaskKey} initialTaskType={contestTaskType} initialEvaluationId={contestEvalId} />}</div>
-        </div> : page === 'data' ? <DataPage data={data} capabilities={capabilities} onRefresh={() => void refresh()} /> : page === 'evaluation' ? <EvaluationPage evaluation={evaluation} videos={data?.videos ?? []} onSaved={() => void refresh()} /> : <HistoryPage history={history} onReuse={reuse} onInspect={result => { setPage('search'); setSelected(result); }} />}
+          </section>{selected && <Inspector selected={selected} evaluations={evaluations} saved={candidates.some(item => item.keyframe_id === selected.keyframe_id)} feedback={feedback[selected.keyframe_id]} imageAvailable={imageAvailable} onClose={() => setSelected(null)} onSelect={setSelected} onSave={result => void saveCandidate(result)} onFeedback={(result, relevant) => void markFeedback(result, relevant)} onExample={result => void search(result)} onSubmitted={() => void refresh()} initialTaskKey={contestTaskKey} initialTaskType={contestTaskType} initialEvaluationId={contestEvalId} initialMode={contestSubmitMode} onTaskKeyChange={updateContestTaskKey} onTaskTypeChange={updateContestTaskType} onEvaluationIdChange={updateContestEvalId} onModeChange={updateContestSubmitMode} />}</div>
+        </div> : page === 'submit' ? <DresSubmissionHub videos={data?.videos ?? []} evaluations={evaluations} dresStatus={dresStatus} history={history} selectedKeyframe={selected} onOpenDresConfig={() => setShowDresModal(true)} onSubmitted={() => void refresh()} initialTaskKey={contestTaskKey} initialEvaluationId={contestEvalId} initialTaskType={contestTaskType} initialMode={contestSubmitMode === 'live' ? 'live' : 'dry_run'} onTaskKeyChange={updateContestTaskKey} onEvaluationIdChange={updateContestEvalId} onModeChange={mode => updateContestSubmitMode(mode)} /> : page === 'data' ? <DataPage data={data} capabilities={capabilities} onRefresh={() => void refresh()} /> : page === 'evaluation' ? <EvaluationPage evaluation={evaluation} videos={data?.videos ?? []} onSaved={() => void refresh()} /> : <HistoryPage history={history} onReuse={reuse} onInspect={result => { setPage('search'); setSelected(result); }} />}
       </main><footer className="workspace-footer"><span>FRAME / CS336</span><span>Milliseconds chính xác. Thứ hạng có giải thích.</span><button className="button text-button" onClick={() => void refresh()}><Icon name="refresh" size={13} />Đồng bộ dữ liệu</button></footer>
     </div>{toast && <div className="toast" role="status"><Icon name="check" size={18} />{toast}</div>}
     <DresModal isOpen={showDresModal} onClose={() => setShowDresModal(false)} status={dresStatus} onUpdated={() => void refresh()} />

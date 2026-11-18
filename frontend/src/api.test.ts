@@ -10,12 +10,15 @@ describe('time and QA contract', () => {
     expect(formatTime(-1)).toBe('—');
     expect(formatTime(NaN)).toBe('—');
   });
-  it('accepts 007 exactly, rejects prefixes and non-ASCII digits', () => {
+  it('accepts text and numbers for QA, preserves 007, rejects empty and newlines', () => {
     expect(validQa('007')).toBe(true);
-    expect(validQa('QA-007')).toBe(false);
-    expect(validQa('００７')).toBe(false);
-    expect(validQa('007 ')).toBe(false);
+    expect(validQa('red car')).toBe(true);
+    expect(validQa('A')).toBe(true);
+    expect(validQa('xe buýt')).toBe(true);
+    expect(validQa('QA-007')).toBe(true);
     expect(validQa('')).toBe(false);
+    expect(validQa('   ')).toBe(false);
+    expect(validQa('007\n')).toBe(false);
   });
 });
 describe('API boundary', () => {

@@ -3,11 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { Inspector } from './Inspector';
 import { SubmissionPanel } from './SubmissionPanel';
+import { DresSubmissionHub } from './DresSubmissionHub';
 import type { SearchResult } from './types';
 
 const fixtureResult: SearchResult = { keyframe_id: 'fixture-k1', video_uid: 'fixture-v1', media_item_name: 'FIXTURE_VIDEO', timestamp_ms: 12340, thumbnail_url: '/fixture.jpg', video_url: '/fixture.mp4', score: .42, contributions: { visual: { rank: 1 } } };
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
 
 describe('DRES deliberate submission', () => {
   it('requires current preview and preserves QA leading zeroes in both requests', async () => {
@@ -18,7 +22,7 @@ describe('DRES deliberate submission', () => {
     fireEvent.change(screen.getByLabelText('Chế độ'), { target: { value: 'mock' } });
     fireEvent.change(screen.getByLabelText('Evaluation'), { target: { value: 'mock-evaluation' } });
     fireEvent.change(screen.getByLabelText('Task / round key'), { target: { value: 'fixture-task' } });
-    fireEvent.change(screen.getByLabelText('Đáp án QA (chuỗi số)'), { target: { value: '007' } });
+    fireEvent.change(screen.getByLabelText(/Đáp án QA/), { target: { value: '007' } });
     expect(screen.getByRole('button', { name: 'Nộp vào mock' })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Xem trước JSON' }));
@@ -41,6 +45,59 @@ describe('DRES deliberate submission', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ghi nhận dry run' })).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Task / round key'), { target: { value: 'task-2' } });
     expect(screen.getByRole('button', { name: 'Ghi nhận dry run' })).toBeDisabled();
+  });
+
+  it('persists task type, mode, evaluation, and task key across unmounts/reselections', () => {
+    const onKey = vi.fn();
+    const onType = vi.fn();
+    const onEval = vi.fn();
+    const onMode = vi.fn();
+
+    const evals = { evaluations: [{ id: 'live-eval-1', name: 'Đề thi 1', status: 'ACTIVE' }, { id: 'local-mock', name: 'Mock', status: 'ACTIVE', mock: true }], mode: 'live' as const, profile: 'aic2024_v2' };
+
+    const { unmount } = render(
+      <SubmissionPanel
+        selected={fixtureResult}
+        evaluations={evals}
+        onSubmitted={vi.fn()}
+        onTaskKeyChange={onKey}
+        onTaskTypeChange={onType}
+        onEvaluationIdChange={onEval}
+        onModeChange={onMode}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('Loại đáp án'), { target: { value: 'QA' } });
+    expect(localStorage.getItem('cs336-task-type')).toBe('QA');
+    expect(onType).toHaveBeenCalledWith('QA');
+
+    fireEvent.change(screen.getByLabelText('Chế độ'), { target: { value: 'live' } });
+    expect(localStorage.getItem('cs336-submit-mode')).toBe('live');
+    expect(onMode).toHaveBeenCalledWith('live');
+
+    fireEvent.change(screen.getByLabelText('Evaluation'), { target: { value: 'live-eval-1' } });
+    expect(localStorage.getItem('cs336-eval-id')).toBe('live-eval-1');
+    expect(onEval).toHaveBeenCalledWith('live-eval-1');
+
+    fireEvent.change(screen.getByLabelText('Task / round key'), { target: { value: 'round-99' } });
+    expect(localStorage.getItem('cs336-task-key')).toBe('round-99');
+    expect(onKey).toHaveBeenCalledWith('round-99');
+
+    unmount();
+
+    // Re-mount (as happens after a new search when selecting a new keyframe)
+    render(
+      <SubmissionPanel
+        selected={{ ...fixtureResult, keyframe_id: 'new-k2' }}
+        evaluations={evals}
+        onSubmitted={vi.fn()}
+      />
+    );
+
+    expect((screen.getByLabelText('Loại đáp án') as HTMLSelectElement).value).toBe('QA');
+    expect((screen.getByLabelText('Chế độ') as HTMLSelectElement).value).toBe('live');
+    expect((screen.getByLabelText('Evaluation') as HTMLSelectElement).value).toBe('live-eval-1');
+    expect((screen.getByLabelText('Task / round key') as HTMLInputElement).value).toBe('round-99');
   });
 });
 
@@ -92,3 +149,223 @@ describe('request races', () => {
     expect(screen.getByRole('button', { name: 'FIXTURE_SECOND' })).toBeInTheDocument();
   });
 });
+
+describe('DresSubmissionHub full integration', () => {
+  it('renders and submits direct KIS payload correctly', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/dres/submit') {
+        return json({ attempt_id: 'test-attempt', status: 'dry_run', payload: {} });
+      }
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <DresSubmissionHub
+        videos={[{ video_uid: 'v1', media_item_name: 'L22_V012', duration_ms: 1200000 }]}
+        evaluations={{
+          evaluations: [{ id: 'a64a8da4-9b83-4431-965e-262667dfe0d1', name: 'AI Challenge Round 1', status: 'ACTIVE' }],
+          mode: 'live',
+          profile: 'aic2024_v2',
+        }}
+        dresStatus={{
+          base_url: 'https://aiclub.uit.edu.vn/dres',
+          has_session: true,
+          session_preview: '02VM...ZVz',
+          mode: 'live',
+          default_server: 'https://aiclub.uit.edu.vn/dres',
+        }}
+        history={{ queries: [], submissions: [] }}
+        selectedKeyframe={null}
+        onOpenDresConfig={vi.fn()}
+        onSubmitted={vi.fn()}
+        initialTaskKey="round-01"
+        initialEvaluationId="a64a8da4-9b83-4431-965e-262667dfe0d1"
+      />
+    );
+
+    // Verify tabs
+    expect(screen.getByText('Textual KIS (TKIS)')).toBeInTheDocument();
+    expect(screen.getByText('Visual KIS (VKIS)')).toBeInTheDocument();
+    expect(screen.getByText('Q&A (Chuẩn AIC 2024)')).toBeInTheDocument();
+    expect(screen.getByText('Video Item only')).toBeInTheDocument();
+
+    // Verify Python code contains requests and L22_V012
+    fireEvent.click(screen.getByRole('button', { name: /Code Python tương ứng/i }));
+    expect(screen.getByText(/import requests/)).toBeInTheDocument();
+
+    // Submit
+    const submitBtn = screen.getByRole('button', { name: /NỘP BÀI THI LÊN DRES/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/dres/submit', expect.any(Object)));
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+    const submitCall = calls.find(call => call[0] === '/api/dres/submit');
+    expect(submitCall).toBeDefined();
+    const body = JSON.parse(String(submitCall![1].body));
+    expect(body.media_item_name).toBe('L22_V012');
+    expect(body.start_ms).toBe(453000);
+    expect(body.end_ms).toBe(453000);
+  });
+});
+
+describe('visual query auto-translation', () => {
+  it('sends auto_translate flag in search and allows manual translation', async () => {
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === '/api/health') return json({ status: 'ok' });
+      if (url === '/api/capabilities') return json({ modes: { visual_text: true, image: false, ocr: false, asr: false, hybrid: false, temporal: false }, reasons: {}, contest_mode: false, fixture: false });
+      if (url === '/api/data') return json({ videos: [], counts: { videos: 0, keyframes: 0, ocr: 0, asr: 0 }, jobs: [], fixture: false });
+      if (url === '/api/dres/evaluations') return json({ evaluations: [], mode: 'dry_run', profile: 'fixture' });
+      if (url === '/api/evaluation') return json({ reports: [], ground_truth_available: false });
+      if (url === '/api/history') return json({ queries: [], submissions: [] });
+      if (url === '/api/candidates') return json({ candidates: [] });
+      if (url === '/api/dres/status') return json({ base_url: '', has_session: false, session_preview: '', mode: 'dry_run', default_server: '' });
+      if (url === '/api/translate') {
+        const body = JSON.parse(String(options?.body));
+        return json({ original_text: body.text, translated_text: 'red car running on the bridge', success: true });
+      }
+      if (url === '/api/search') {
+        return json({
+          results: [{ ...fixtureResult, media_item_name: 'TEST_VIDEO' }],
+          elapsed_ms: 12,
+          index_version: 'openclip',
+          translated_visual_query: 'red car running on the bridge',
+        });
+      }
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('Backend kết nối')).toBeInTheDocument());
+
+    const input = screen.getByLabelText('Nội dung truy vấn');
+    fireEvent.change(input, { target: { value: 'xe đỏ chạy qua cầu' } });
+
+    // Click Manual Translate button
+    const translateBtn = screen.getByRole('button', { name: /Dịch sang EN/i });
+    fireEvent.click(translateBtn);
+
+    await waitFor(() => {
+      const visualInput = screen.getByLabelText(/Mô tả visual tiếng Anh/i) as HTMLInputElement;
+      expect(visualInput.value).toBe('red car running on the bridge');
+    });
+
+    // Submit search
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+      const searchCall = calls.find(call => call[0] === '/api/search');
+      expect(searchCall).toBeDefined();
+      const body = JSON.parse(String(searchCall![1].body));
+      expect(body.query).toBe('xe đỏ chạy qua cầu');
+      expect(body.visual_query).toBe('red car running on the bridge');
+      expect(body.auto_translate).toBe(true);
+    });
+
+    // Check display of translated visual query badge
+    expect(await screen.findByText(/Visual EN:/)).toBeInTheDocument();
+  });
+
+  it('allows unchecking auto_translate and persists preference to localStorage', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/health') return json({ status: 'ok' });
+      if (url === '/api/capabilities') return json({ modes: { visual_text: true, image: false, ocr: false, asr: false, hybrid: false, temporal: false }, reasons: {}, contest_mode: false, fixture: false });
+      if (url === '/api/data') return json({ videos: [], counts: { videos: 0, keyframes: 0, ocr: 0, asr: 0 }, jobs: [], fixture: false });
+      if (url === '/api/dres/evaluations') return json({ evaluations: [], mode: 'dry_run', profile: 'fixture' });
+      if (url === '/api/evaluation') return json({ reports: [], ground_truth_available: false });
+      if (url === '/api/history') return json({ queries: [], submissions: [] });
+      if (url === '/api/candidates') return json({ candidates: [] });
+      if (url === '/api/dres/status') return json({ base_url: '', has_session: false, session_preview: '', mode: 'dry_run', default_server: '' });
+      if (url === '/api/search') {
+        return json({
+          results: [{ ...fixtureResult, media_item_name: 'TEST_VIDEO' }],
+          elapsed_ms: 10,
+          index_version: 'openclip',
+        });
+      }
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('Backend kết nối')).toBeInTheDocument());
+
+    const toggle = screen.getByLabelText(/Auto-translate/i) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+
+    // Uncheck toggle
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(false);
+    expect(localStorage.getItem('cs336-auto-translate')).toBe('false');
+
+    const input = screen.getByLabelText('Nội dung truy vấn');
+    fireEvent.change(input, { target: { value: 'người đi bộ' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+      const searchCall = calls.find(call => call[0] === '/api/search');
+      expect(searchCall).toBeDefined();
+      const body = JSON.parse(String(searchCall![1].body));
+      expect(body.auto_translate).toBe(false);
+    });
+  });
+
+  it('submits Q&A direct payload with text answer and updates preview in DresSubmissionHub', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/dres/submit') {
+        return json({ attempt_id: 'qa-attempt', status: 'dry_run', payload: {} });
+      }
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <DresSubmissionHub
+        videos={[{ video_uid: 'v1', media_item_name: 'L22_V012', duration_ms: 1200000 }]}
+        evaluations={{
+          evaluations: [{ id: 'eval-round-1', name: 'AI Challenge Round 1', status: 'ACTIVE' }],
+          mode: 'dry_run',
+          profile: 'aic2024_v2',
+        }}
+        dresStatus={{
+          base_url: 'https://aiclub.uit.edu.vn/dres',
+          has_session: false,
+          session_preview: '',
+          mode: 'dry_run',
+          default_server: 'https://aiclub.uit.edu.vn/dres',
+        }}
+        history={{ queries: [], submissions: [] }}
+        selectedKeyframe={null}
+        onOpenDresConfig={vi.fn()}
+        onSubmitted={vi.fn()}
+        initialTaskKey="round-01"
+        initialEvaluationId="eval-round-1"
+      />
+    );
+
+    // Select Q&A tab
+    fireEvent.click(screen.getByText('Q&A (Chuẩn AIC 2024)'));
+
+    // Input answer
+    const answerInput = screen.getByLabelText(/Đáp án câu hỏi/i);
+    fireEvent.change(answerInput, { target: { value: 'xe cứu thương' } });
+
+    // Submit
+    const submitBtn = screen.getByRole('button', { name: /KIỂM TRA PAYLOAD|NỘP BÀI/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+      const submitCall = calls.find(call => call[0] === '/api/dres/submit');
+      expect(submitCall).toBeDefined();
+      const body = JSON.parse(String(submitCall![1].body));
+      expect(body.answer).toBe('xe cứu thương');
+      expect(body.task_type).toBe('QA');
+      expect(body.media_item_name).toBe('L22_V012');
+    });
+  });
+});
+

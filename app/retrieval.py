@@ -243,8 +243,18 @@ class RetrievalService:
                 query += " " + " ".join(request["expansion"])
         # Chỉ materialize metadata khi có filter; unfiltered query resolve top-k.
         rows = self._rows(request) if request.get("video_uids") or request.get("start_ms") is not None or request.get("end_ms") is not None else None
+        visual_query = request.get("visual_query")
+        translated_visual = None
+        if request.get("auto_translate") and not visual_query and mode in ("visual_text", "hybrid", "temporal"):
+            from .translator import translate_vi_to_en
+            candidate = translate_vi_to_en(query)
+            if candidate and candidate.strip():
+                visual_query = candidate.strip()
+                translated_visual = visual_query
+                request = dict(request, visual_query=visual_query)
+
         if mode == "visual_text":
-            results = self._visual(request.get("visual_query") or query, request, rows)
+            results = self._visual(visual_query or query, request, rows)
         elif mode in ("ocr", "asr"):
             if not self.capabilities()["modes"][mode]:
                 raise EncoderUnavailable(f"Chưa có dữ liệu {mode.upper()}.")
@@ -257,7 +267,13 @@ class RetrievalService:
             if mode == "temporal":
                 if not request.get("query_b", "").strip():
                     raise ValueError("Temporal cần query_b.")
-                second_request = dict(request, visual_query=None)
+                second_visual = None
+                if request.get("auto_translate"):
+                    from .translator import translate_vi_to_en
+                    candidate_b = translate_vi_to_en(request["query_b"].strip())
+                    if candidate_b and candidate_b.strip():
+                        second_visual = candidate_b.strip()
+                second_request = dict(request, visual_query=second_visual)
                 second = weighted_rrf(self._channels(request["query_b"], second_request, rows, warnings), request.get("weights", {}))
                 results = temporal_pairs(first, second, request.get("min_gap_ms", 1), request.get("max_gap_ms", 30000), request.get("top_k", 24))
             else:
@@ -273,7 +289,10 @@ class RetrievalService:
         index = self._load_index()
         if index and index.manifest.get("fixture"):
             warnings.append("Kết quả trên fixture tổng hợp; không phải benchmark semantic của dataset thật.")
-        return {"results": results, "elapsed_ms": (time.perf_counter() - started) * 1000, "index_version": index.version if index else None, "warnings": warnings}
+        res = {"results": results, "elapsed_ms": (time.perf_counter() - started) * 1000, "index_version": index.version if index else None, "warnings": warnings}
+        if translated_visual:
+            res["translated_visual_query"] = translated_visual
+        return res
 
     def _image_allowed(self):
         if self.settings.contest_mode and self.settings.task_type == "video_kis":

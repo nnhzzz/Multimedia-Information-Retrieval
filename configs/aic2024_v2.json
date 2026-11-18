@@ -8,7 +8,7 @@
   "session_parameter": "session",
   "time_unit": "milliseconds",
   "kis_point_submission": true,
-  "qa_answer_pattern": "[0-9]+",
+  "qa_answer_pattern": "[^\\r\\n]+",
   "qa_format": "{answer}-{media_item_name}-{timestamp_ms}",
   "manual_task_key_required": true,
   "task_limits_seconds": {"video_kis": 240, "textual_kis": 300, "qa": 300},

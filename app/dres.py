@@ -146,6 +146,11 @@ class DresService:
         except Exception:
             pass
 
+    def _invalidate_session(self) -> None:
+        """Xoá session hết hạn khỏi bộ nhớ và runtime config."""
+        self._session = ""
+        self._save_runtime_config()
+
     def get_status(self) -> dict:
         """Trạng thái kết nối DRES hiện tại."""
         session_preview = ""
@@ -297,18 +302,67 @@ class DresService:
 
         Local-mock được ghi nhãn mô phỏng. Live trả id/name/status theo schema;
         người dùng phải chọn rõ một evaluation ACTIVE, không tự chọn phần tử đầu.
+        Khi phiên DRES hết hạn (401) hoặc chưa đăng nhập, trả local mock kèm flag
+        session_expired thay vì làm gián đoạn toàn bộ ứng dụng.
         """
         local_evaluation = {"id": MOCK_EVALUATION_ID, "name": "Luyện tập local (mô phỏng AIC2024)",
                             "status": "ACTIVE", "mock": True}
         if self.dry_run:
             return {"evaluations": [local_evaluation],
                     "mode": "dry_run", "profile": self.profile["name"]}
-        response = self._request("GET", self.profile["evaluations_path"])
+
+        # Đang ở chế độ Live nhưng chưa có session hoặc credentials
+        if not self._session and not (self.environ.get("DRES_USERNAME") and self.environ.get("DRES_PASSWORD")):
+            return {
+                "evaluations": [local_evaluation],
+                "mode": "live",
+                "session_expired": True,
+                "profile": self.profile["name"],
+                "warning": "Chưa có session DRES. Vui lòng mở 'Cấu hình DRES' để đăng nhập.",
+            }
+
+        try:
+            response = self._request("GET", self.profile["evaluations_path"])
+        except PermissionError:
+            return {
+                "evaluations": [local_evaluation],
+                "mode": "live",
+                "session_expired": True,
+                "profile": self.profile["name"],
+                "warning": "Chưa có session DRES. Vui lòng mở 'Cấu hình DRES' để đăng nhập.",
+            }
+
+        if response.status_code == 401:
+            self._invalidate_session()
+            return {
+                "evaluations": [local_evaluation],
+                "mode": "live",
+                "session_expired": True,
+                "profile": self.profile["name"],
+                "warning": "Phiên đăng nhập DRES đã hết hạn (HTTP 401). Vui lòng đăng nhập lại qua 'Cấu hình DRES'.",
+            }
+
         if response.status_code != 200 or not isinstance(response.body, list):
             raise DresHttpError(f"Không đọc được evaluations DRES (HTTP {response.status_code})")
         evaluations = [{k: self._redact(row.get(k)) for k in ("id", "name", "status", "type")}
                        for row in response.body if isinstance(row, dict)]
         return {"evaluations": evaluations + [local_evaluation], "mode": "live", "profile": self.profile["name"]}
+
+    def current_task(self, evaluation_id: str) -> dict:
+        """Lấy thông tin task hiện tại đang mở trong evaluation từ DRES server nếu có."""
+        if self.dry_run or not self.base_url or not self._session:
+            return {"active": False, "task": None, "mode": "dry_run" if self.dry_run else "live"}
+        try:
+            path = f"/api/v2/client/evaluation/currentTask/{quote(evaluation_id, safe='')}"
+            res = self._request("GET", path)
+            if res.status_code == 200 and isinstance(res.body, dict):
+                return {"active": True, "task": self._redact(res.body), "mode": "live"}
+            if res.status_code == 401:
+                self._invalidate_session()
+                return {"active": False, "task": None, "mode": "live", "http_status": 401, "session_expired": True}
+            return {"active": False, "task": None, "mode": "live", "http_status": res.status_code}
+        except Exception:
+            return {"active": False, "task": None, "mode": "live"}
 
     @staticmethod
     def _identifier(request, field):
@@ -319,46 +373,164 @@ class DresService:
         return value.strip()
 
     def _prepare(self, request: dict) -> tuple[dict, dict]:
-        """Resolve media từ keyframe, kiểm tra ms/duration/QA và name xung đột."""
+        """Resolve media từ keyframe hoặc input trực tiếp, kiểm tra ms/duration/QA và name xung đột."""
         mode = request.get("mode", "dry_run")
         if mode not in {"dry_run", "mock", "live"}:
             raise ValueError("mode phải là dry_run, mock hoặc live")
         evaluation_id = self._identifier(request, "evaluation_id")
-        task_key = self._identifier(request, "task_key")
-        task_type = request.get("task_type", "KIS")
-        if task_type not in {"KIS", "QA"}:
-            raise ValueError("task_type phải là KIS hoặc QA")
-        keyframe_id = self._identifier(request, "keyframe_id")
-        item = self.db.one("SELECT k.*,v.media_item_name,v.duration_ms,v.source_batch FROM keyframes k "
-                           "JOIN videos v ON v.video_uid=k.video_uid WHERE k.keyframe_id=?", (keyframe_id,))
-        if item is None:
-            raise ValueError("Keyframe không tồn tại")
-        ms = request.get("timestamp_ms", item["timestamp_ms"])
-        if ms is None:
-            ms = item["timestamp_ms"]
-        if type(ms) is not int or not 0 <= ms <= item["duration_ms"]:
-            raise ValueError("timestamp_ms phải là số nguyên trong duration video gốc")
-        name = item["media_item_name"]
-        if not isinstance(name, str) or not name or any(c in name for c in "\\/\r\n"):
-            raise ValueError("media_item_name không hợp lệ")
-        duplicate = self.db.one("SELECT COUNT(*) AS n FROM videos WHERE media_item_name=?", (name,))
-        if duplicate["n"] != 1:
-            raise ValueError("Trùng media_item_name giữa video; cần mapping đã kiểm chứng trước khi nộp")
-        answer = request.get("answer")
-        if task_type == "QA":
-            if not isinstance(answer, str) or re.fullmatch(self.profile["qa_answer_pattern"], answer) is None:
-                raise ValueError("QA yêu cầu chuỗi ASCII 0–9; giữ nguyên các số 0 đầu")
-            payload_answer = {"text": self.profile["qa_format"].format(answer=answer, media_item_name=name, timestamp_ms=ms)}
+
+        # task_key: Cho phép default nếu client không truyền
+        raw_key = request.get("task_key")
+        if raw_key and isinstance(raw_key, str) and raw_key.strip():
+            task_key = raw_key.strip()
+            if len(task_key) > 200:
+                raise ValueError("task_key không hợp lệ (tối đa 200 ký tự)")
         else:
-            payload_answer = {"mediaItemName": name, "start": ms, "end": ms}
+            task_key = "round-01"
+
+        raw_task_type = request.get("task_type", "KIS")
+        if not isinstance(raw_task_type, str):
+            raw_task_type = "KIS"
+        task_type = raw_task_type.strip().upper()
+        if task_type not in {"KIS", "TKIS", "TEXTUAL_KIS", "VKIS", "VIDEO_KIS", "QA", "Q&A", "QA_TEXT", "TEXT", "ITEM", "AVS", "CUSTOM"}:
+            raise ValueError("task_type phải là KIS hoặc QA")
+
+        keyframe_id = request.get("keyframe_id")
+        media_name = (request.get("media_item_name") or request.get("video_id") or "").strip()
+        if media_name.endswith(".mp4"):
+            media_name = media_name[:-4].strip()
+
+        item = None
+        if keyframe_id:
+            if not isinstance(keyframe_id, str) or not keyframe_id.strip() or len(keyframe_id) > 200:
+                raise ValueError("Thiếu hoặc không hợp lệ: keyframe_id")
+            item = self.db.one("SELECT k.*,v.media_item_name,v.duration_ms,v.source_batch FROM keyframes k "
+                               "JOIN videos v ON v.video_uid=k.video_uid WHERE k.keyframe_id=?", (keyframe_id.strip(),))
+            if item is None:
+                raise ValueError("Keyframe không tồn tại")
+            name = item["media_item_name"]
+            video_uid = item["video_uid"]
+            duration_ms = item["duration_ms"]
+            default_ms = item["timestamp_ms"]
+        elif media_name:
+            if any(c in media_name for c in "\\/\r\n"):
+                raise ValueError("media_item_name không hợp lệ")
+            v = self.db.one("SELECT video_uid, media_item_name, duration_ms, source_batch FROM videos WHERE media_item_name=? OR video_uid=?", (media_name, media_name))
+            if v:
+                name = v["media_item_name"]
+                video_uid = v["video_uid"]
+                duration_ms = v["duration_ms"]
+            else:
+                name = media_name
+                video_uid = media_name
+                duration_ms = None
+            default_ms = 0
+        else:
+            if task_type in {"QA_TEXT", "TEXT", "CUSTOM"}:
+                name = ""
+                video_uid = ""
+                duration_ms = None
+                default_ms = 0
+            else:
+                raise ValueError("Thiếu hoặc không hợp lệ: keyframe_id")
+
+        if name:
+            if not isinstance(name, str) or not name or any(c in name for c in "\\/\r\n"):
+                raise ValueError("media_item_name không hợp lệ")
+            duplicate = self.db.one("SELECT COUNT(*) AS n FROM videos WHERE media_item_name=?", (name,))
+            if duplicate and duplicate["n"] > 1:
+                raise ValueError("Trùng media_item_name giữa video; cần mapping đã kiểm chứng trước khi nộp")
+
+        ms = request.get("timestamp_ms")
+        start_ms = request.get("start_ms")
+        end_ms = request.get("end_ms")
+
+        if ms is not None and (type(ms) is not int or ms < 0):
+            raise ValueError("timestamp_ms phải là số nguyên trong duration video gốc")
+
+        if start_ms is None and end_ms is None:
+            if ms is not None:
+                start = ms
+                end = ms
+            elif item is not None:
+                start = default_ms
+                end = default_ms
+                ms = default_ms
+            else:
+                start = 0
+                end = 0
+                ms = 0
+        elif start_ms is None:
+            if type(end_ms) is not int or end_ms < 0:
+                raise ValueError("end_ms phải là số nguyên không âm")
+            start = end_ms
+            end = end_ms
+            ms = start
+        elif end_ms is None:
+            if type(start_ms) is not int or start_ms < 0:
+                raise ValueError("start_ms phải là số nguyên không âm")
+            start = start_ms
+            end = start_ms
+            ms = start
+        else:
+            if type(start_ms) is not int or type(end_ms) is not int or start_ms < 0 or end_ms < start_ms:
+                raise ValueError("start_ms và end_ms phải là số nguyên không âm và end_ms >= start_ms")
+            start = start_ms
+            end = end_ms
+            ms = start
+
+        if duration_ms is not None and task_type not in {"ITEM", "AVS", "QA_TEXT", "TEXT", "CUSTOM"}:
+            if start > duration_ms or end > duration_ms or (ms is not None and ms > duration_ms):
+                raise ValueError("timestamp_ms phải là số nguyên trong duration video gốc")
+
+        custom_payload = request.get("custom_payload")
+        if task_type == "CUSTOM" and isinstance(custom_payload, dict):
+            payload = custom_payload
+            answer = None
+        elif task_type in {"QA", "Q&A"}:
+            raw_text = request.get("raw_text")
+            if raw_text is not None and isinstance(raw_text, str) and raw_text.strip():
+                payload_answer = {"text": raw_text.strip()}
+                answer = raw_text.strip()
+            else:
+                answer = request.get("answer")
+                pattern = self.profile.get("qa_answer_pattern", r"[^\r\n]+")
+                if not isinstance(answer, str) or not answer.strip() or any(c in answer for c in "\r\n"):
+                    raise ValueError("QA yêu cầu nội dung câu trả lời (chuỗi chữ hoặc số không rỗng)")
+                if pattern and re.fullmatch(pattern, answer.strip()) is None:
+                    raise ValueError("QA câu trả lời không hợp lệ theo mẫu")
+                answer_clean = answer.strip()
+                payload_answer = {"text": self.profile["qa_format"].format(answer=answer_clean, media_item_name=name, timestamp_ms=ms)}
+                answer = answer_clean
+            payload = {"answerSets": [{"answers": [payload_answer]}]}
+        elif task_type in {"QA_TEXT", "TEXT"}:
+            text = request.get("raw_text") or request.get("answer")
+            if not text or not isinstance(text, str):
+                raise ValueError("QA_TEXT yêu cầu nội dung câu trả lời")
+            payload_answer = {"text": text.strip()}
+            payload = {"answerSets": [{"answers": [payload_answer]}]}
+            answer = text.strip()
+        elif task_type in {"ITEM", "AVS"}:
+            payload_answer = {"mediaItemName": name}
+            payload = {"answerSets": [{"answers": [payload_answer]}]}
+            answer = None
+        else:
+            # KIS, TKIS, VKIS
+            answer = None
+            payload_answer = {"mediaItemName": name, "start": start, "end": end}
+            payload = {"answerSets": [{"answers": [payload_answer]}]}
+
         if mode == "live":
             self._require_live()
-            source = str(item["timestamp_source"]).casefold()
-            if not source or any(tag in source for tag in ("unknown", "unverified", "fallback", "fixture")) or "fixture" in str(item["source_batch"]).casefold():
-                raise ValueError("Live cần timestamp/data thật đã kiểm chứng; không nộp fixture hoặc FPS fallback")
+            if item is not None:
+                source = str(item["timestamp_source"]).casefold()
+                if not source or any(tag in source for tag in ("unknown", "unverified", "fallback", "fixture")) or "fixture" in str(item["source_batch"]).casefold():
+                    raise ValueError("Live cần timestamp/data thật đã kiểm chứng; không nộp fixture hoặc FPS fallback")
+
         context = {"mode": mode, "evaluation_id": evaluation_id, "task_key": task_key,
-                   "task_type": task_type, "answer": answer, "timestamp_ms": ms, "video_uid": item["video_uid"]}
-        return {"answerSets": [{"answers": [payload_answer]}]}, context
+                   "task_type": "QA" if task_type in {"QA", "Q&A", "QA_TEXT", "TEXT"} else "KIS",
+                   "answer": answer, "timestamp_ms": ms, "video_uid": video_uid}
+        return payload, context
 
     def preview(self, request: dict) -> dict:
         """Preview payload point KIS hoặc QA; không network và không reserve ledger."""
@@ -425,7 +597,10 @@ class DresService:
         """
         payload, context = self._prepare(request)
         if context["mode"] == "live":
-            active = self.evaluations()["evaluations"]
+            eval_data = self.evaluations()
+            if eval_data.get("session_expired") or not self._session:
+                raise PermissionError("Phiên đăng nhập DRES đã hết hạn hoặc chưa đăng nhập. Vui lòng mở 'Cấu hình DRES' để đăng nhập lại.")
+            active = eval_data["evaluations"]
             selected = next((row for row in active if row.get("id") == context["evaluation_id"]), None)
             if selected is None or str(selected.get("status", "")).upper() != "ACTIVE" or selected.get("mock"):
                 raise ValueError("Phải chọn rõ evaluation ACTIVE; không tự chọn evaluation khác")
@@ -444,6 +619,8 @@ class DresService:
             try:
                 result = self._request("POST", self.profile["submit_path"].format(
                     evaluation_id=quote(context["evaluation_id"], safe="")), body=payload)
+                if result.status_code == 401:
+                    self._invalidate_session()
                 status = self._parse_verdict(result)
                 response = {"http_status": result.status_code, "body": result.body,
                             "retry_allowed": False}
@@ -471,8 +648,8 @@ class DresService:
                 or not 0 <= start <= end <= video["duration_ms"]):
             raise ValueError("Ground truth phải là khoảng ms hợp lệ trong video có thật trong metadata")
         answer = request.get("answer")
-        if kind == "qa" and (not isinstance(answer, str) or re.fullmatch(r"[0-9]+", answer) is None):
-            raise ValueError("Ground truth QA yêu cầu chuỗi ASCII 0–9")
+        if kind == "qa" and (not isinstance(answer, str) or not answer.strip() or any(c in answer for c in "\r\n")):
+            raise ValueError("Ground truth QA yêu cầu chuỗi chữ hoặc số không rỗng")
         now, limit = self.clock(), self.profile["task_limits_seconds"][kind]
         try:
             self.db.execute("INSERT INTO mock_tasks(task_key,task_type,video_uid,start_ms,end_ms,answer,started_at,time_limit_s) "

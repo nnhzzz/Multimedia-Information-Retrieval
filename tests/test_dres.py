@@ -102,11 +102,18 @@ def test_payload_milliseconds_and_qa_leading_zeros(db):
     assert qa == {"answerSets": [{"answers": [{"text": "007-K01_V001-12341"}]}]}
 
 
-@pytest.mark.parametrize("answer", ["", "１２", "١٢", "QA-007", "7.0", " 007 ", 7])
-def test_qa_rejects_non_ascii_digits(db, answer):
-    """Upstream text rộng hơn luật AIC2024; Unicode digits cũng phải bị chặn."""
-    with pytest.raises(ValueError, match="ASCII"):
+@pytest.mark.parametrize("answer", ["", "   ", "\n", "\r\n", 7, None])
+def test_qa_rejects_empty_or_invalid_answers(db, answer):
+    """QA yêu cầu chuỗi chữ hoặc số không rỗng, từ chối rỗng, newline hoặc non-string."""
+    with pytest.raises(ValueError):
         service(db).preview(request(task_type="QA", answer=answer))
+
+
+@pytest.mark.parametrize("answer", ["007", "red car", "xe buýt", "A", "blue_shirt", "12"])
+def test_qa_accepts_text_and_numbers(db, answer):
+    """QA chấp nhận cả chữ lẫn số, bảo toàn nội dung đáp án trong format <ANSWER>-<VIDEO>-<TIME>."""
+    payload = service(db).preview(request(task_type="QA", answer=answer, timestamp_ms=5000))["payload"]
+    assert payload == {"answerSets": [{"answers": [{"text": f"{answer.strip()}-K01_V001-5000"}]}]}
 
 
 @pytest.mark.parametrize("timestamp", [-1, 20001, 12340.0, float("nan"), True, "12340"])
@@ -374,4 +381,111 @@ def test_dres_status_config_and_login(db):
     # login thất bại
     with pytest.raises(DresHttpError):
         dres.login("team7", "wrongpass")
+
+
+def test_direct_submission_without_keyframe_id(db):
+    """Kiểm tra nộp trực tiếp bằng media_item_name hoặc video_id (như script của người dùng)."""
+    dres = service(db)
+    # 1. KIS trực tiếp: media_item_name, start_ms, end_ms
+    req = {
+        "media_item_name": "K01_V001",
+        "start_ms": 5000,
+        "end_ms": 8000,
+        "task_type": "TKIS",
+        "evaluation_id": "eval-1",
+        "mode": "dry_run",
+    }
+    prev = dres.preview(req)
+    assert prev["payload"]["answerSets"][0]["answers"][0] == {
+        "mediaItemName": "K01_V001",
+        "start": 5000,
+        "end": 8000,
+    }
+    sub = dres.submit(req)
+    assert sub["status"] == "dry_run"
+
+    # 2. Point submission: start_ms == end_ms (y hệt script người dùng với video_id)
+    script_req = {
+        "video_id": "K01_V001",
+        "start_ms": 4530,
+        "end_ms": 4530,
+        "task_type": "KIS",
+        "evaluation_id": "eval-1",
+        "mode": "dry_run",
+    }
+    prev_script = dres.preview(script_req)
+    assert prev_script["payload"]["answerSets"][0]["answers"][0] == {
+        "mediaItemName": "K01_V001",
+        "start": 4530,
+        "end": 4530,
+    }
+
+    # 3. QA raw text
+    qa_text_req = {
+        "task_type": "QA_TEXT",
+        "raw_text": "3-K01_V001-453000",
+        "evaluation_id": "eval-1",
+        "mode": "dry_run",
+    }
+    prev_qa = dres.preview(qa_text_req)
+    assert prev_qa["payload"]["answerSets"][0]["answers"][0] == {
+        "text": "3-K01_V001-453000",
+    }
+
+    # 4. Item only
+    item_req = {
+        "media_item_name": "K01_V001",
+        "task_type": "ITEM",
+        "evaluation_id": "eval-1",
+        "mode": "dry_run",
+    }
+    prev_item = dres.preview(item_req)
+    assert prev_item["payload"]["answerSets"][0]["answers"][0] == {
+        "mediaItemName": "K01_V001",
+    }
+
+    # 5. Direct structured QA: media_item_name, timestamp_ms, text answer
+    direct_qa_req = {
+        "media_item_name": "K01_V001",
+        "timestamp_ms": 12000,
+        "task_type": "QA",
+        "answer": "xe buýt số 8",
+        "evaluation_id": "eval-1",
+        "mode": "dry_run",
+    }
+    prev_direct_qa = dres.preview(direct_qa_req)
+    assert prev_direct_qa["payload"]["answerSets"][0]["answers"][0] == {
+        "text": "xe buýt số 8-K01_V001-12000",
+    }
+    assert dres.submit(direct_qa_req)["status"] == "dry_run"
+
+
+def test_evaluations_401_graceful_invalidation(db):
+    """Khi session DRES hết hạn (401), evaluations không crash app và tự xoá session hỏng."""
+    def transport(method, url, params, body, timeout):
+        if url.endswith("/list"):
+            return DresResponse(401, {"description": "Session expired"})
+        return DresResponse(200, {})
+
+    dres = service(db, transport=transport, environ={"DRES_DRY_RUN": "false", "DRES_BASE_URL": "https://dres.test",
+                                                     "DRES_SESSION_ID": "stale-session-token"})
+    assert dres.get_status()["has_session"] is True
+
+    result = dres.evaluations()
+    assert result["mode"] == "live"
+    assert result.get("session_expired") is True
+    assert any(row.get("mock") for row in result["evaluations"])
+    # Session cũ đã bị xoá khỏi bộ nhớ
+    assert dres.get_status()["has_session"] is False
+
+
+def test_evaluations_live_without_session_returns_local_mock(db):
+    """Bật Live nhưng chưa đăng nhập không văng PermissionError làm sập khởi động."""
+    dres = service(db, environ={"DRES_DRY_RUN": "false", "DRES_BASE_URL": "https://dres.test"})
+    result = dres.evaluations()
+    assert result["mode"] == "live"
+    assert result.get("session_expired") is True
+    assert any(row.get("mock") for row in result["evaluations"])
+
+
 

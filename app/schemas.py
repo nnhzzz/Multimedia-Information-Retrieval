@@ -70,6 +70,7 @@ class SearchRequest(BaseModel):
     use_feedback: bool = False
     expansion: list[str] = Field(default_factory=list, max_length=30)
     weights: dict[str, float] = Field(default_factory=lambda: {"visual": 1, "ocr": 1, "asr": 1})
+    auto_translate: bool = False
 
     @model_validator(mode="after")
     def check_ranges(self):
@@ -102,13 +103,20 @@ class CandidateRequest(BaseModel):
 
 
 class SubmissionRequest(BaseModel):
-    """Không nhận media name tùy ý: backend resolve tên và kiểm tra duration/ambiguity."""
-    keyframe_id: str
+    """Hỗ trợ nộp cả từ keyframe_id lẫn nộp trực tiếp theo video_id + start_ms + end_ms."""
+    model_config = ConfigDict(extra="ignore")
+    keyframe_id: str | None = None
+    media_item_name: str | None = None
+    video_id: str | None = None
     timestamp_ms: int | None = Field(default=None, ge=0, strict=True)
-    task_type: Literal["KIS", "QA"] = "KIS"
+    start_ms: int | None = Field(default=None, ge=0, strict=True)
+    end_ms: int | None = Field(default=None, ge=0, strict=True)
+    task_type: str = "KIS"
     answer: str | None = None
+    raw_text: str | None = None
+    custom_payload: dict | None = None
     evaluation_id: str = Field(min_length=1, max_length=200)
-    task_key: str = Field(min_length=1, max_length=200)
+    task_key: str = Field(default="round-01", max_length=200)
     mode: Literal["dry_run", "mock", "live"] = "dry_run"
 
 
@@ -132,6 +140,14 @@ class DresLoginRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+class TranslateRequest(BaseModel):
+    """Yêu cầu dịch text tự động sang tiếng Anh cho OpenCLIP visual query."""
+    model_config = ConfigDict(extra="ignore")
+    text: str = Field(min_length=1, max_length=4000)
+    source: str = "vi"
+    target: str = "en"
 
 
 class MockTaskRequest(BaseModel):

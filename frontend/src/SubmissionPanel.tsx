@@ -16,9 +16,14 @@ export function SubmissionPanel({
   selected,
   evaluations,
   onSubmitted,
-  initialTaskKey = '',
-  initialTaskType = 'KIS',
-  initialEvaluationId = '',
+  initialTaskKey,
+  initialTaskType,
+  initialEvaluationId,
+  initialMode,
+  onTaskKeyChange,
+  onTaskTypeChange,
+  onEvaluationIdChange,
+  onModeChange,
 }: {
   selected: SearchResult;
   evaluations: EvaluationList | null;
@@ -26,50 +31,157 @@ export function SubmissionPanel({
   initialTaskKey?: string;
   initialTaskType?: 'KIS' | 'QA';
   initialEvaluationId?: string;
+  initialMode?: 'dry_run' | 'mock' | 'live';
+  onTaskKeyChange?: (key: string) => void;
+  onTaskTypeChange?: (type: 'KIS' | 'QA') => void;
+  onEvaluationIdChange?: (id: string) => void;
+  onModeChange?: (mode: 'dry_run' | 'mock' | 'live') => void;
 }) {
-  const [evaluationId, setEvaluationId] = useState(initialEvaluationId);
-  const [taskKey, setTaskKey] = useState(initialTaskKey);
-  const [taskType, setTaskType] = useState<'KIS' | 'QA'>(initialTaskType);
+  const [evaluationId, setEvaluationId] = useState(() => {
+    if (initialEvaluationId) return initialEvaluationId;
+    return localStorage.getItem('cs336-eval-id') || '';
+  });
+  const [taskKey, setTaskKey] = useState(() => {
+    if (initialTaskKey) return initialTaskKey;
+    return localStorage.getItem('cs336-task-key') || 'round-01';
+  });
+  const [taskType, setTaskType] = useState<'KIS' | 'QA'>(() => {
+    if (initialTaskType) return initialTaskType;
+    const saved = localStorage.getItem('cs336-task-type');
+    return (saved === 'KIS' || saved === 'QA') ? saved : 'KIS';
+  });
+  const [mode, setMode] = useState<'dry_run' | 'mock' | 'live'>(() => {
+    if (initialMode) return initialMode;
+    const saved = localStorage.getItem('cs336-submit-mode');
+    return (saved === 'dry_run' || saved === 'mock' || saved === 'live') ? saved : 'dry_run';
+  });
+  const [startMs, setStartMs] = useState<number>(selected.timestamp_ms);
+  const [endMs, setEndMs] = useState<number>(selected.timestamp_ms);
   const [answer, setAnswer] = useState('');
-  const [mode, setMode] = useState<'dry_run' | 'mock' | 'live'>('dry_run');
   const [preview, setPreview] = useState<{ key: string; value: PreviewResponse } | null>(null);
   const [submission, setSubmission] = useState<SubmissionResponse | null>(null);
   const [submissionKey, setSubmissionKey] = useState('');
   const [busy, setBusy] = useState<'preview' | 'submit' | null>(null);
   const [error, setError] = useState('');
   const inFlight = useRef(false);
+  const prevPropTaskKey = useRef(initialTaskKey);
+  const prevPropTaskType = useRef(initialTaskType);
+  const prevPropEvalId = useRef(initialEvaluationId);
+  const prevPropMode = useRef(initialMode);
 
   useEffect(() => {
-    if (initialTaskKey) setTaskKey(initialTaskKey);
+    if (initialTaskKey && initialTaskKey !== prevPropTaskKey.current) {
+      prevPropTaskKey.current = initialTaskKey;
+      setTaskKey(initialTaskKey);
+    }
   }, [initialTaskKey]);
 
   useEffect(() => {
-    if (initialTaskType) setTaskType(initialTaskType);
+    if (initialTaskType && initialTaskType !== prevPropTaskType.current) {
+      prevPropTaskType.current = initialTaskType;
+      setTaskType(initialTaskType);
+    }
   }, [initialTaskType]);
 
   useEffect(() => {
-    if (initialEvaluationId) setEvaluationId(initialEvaluationId);
+    if (initialEvaluationId && initialEvaluationId !== prevPropEvalId.current) {
+      prevPropEvalId.current = initialEvaluationId;
+      setEvaluationId(initialEvaluationId);
+    }
   }, [initialEvaluationId]);
+
+  useEffect(() => {
+    if (initialMode && initialMode !== prevPropMode.current) {
+      prevPropMode.current = initialMode;
+      setMode(initialMode);
+    }
+  }, [initialMode]);
+
+  useEffect(() => {
+    setStartMs(selected.timestamp_ms);
+    setEndMs(selected.timestamp_ms);
+  }, [selected]);
+
+  const handleTaskKeyChange = (val: string) => {
+    setTaskKey(val);
+    localStorage.setItem('cs336-task-key', val);
+    onTaskKeyChange?.(val);
+  };
+
+  const handleTaskTypeChange = (val: 'KIS' | 'QA') => {
+    setTaskType(val);
+    localStorage.setItem('cs336-task-type', val);
+    onTaskTypeChange?.(val);
+  };
+
+  const handleEvaluationIdChange = (val: string) => {
+    setEvaluationId(val);
+    localStorage.setItem('cs336-eval-id', val);
+    onEvaluationIdChange?.(val);
+  };
+
+  const handleModeChange = (val: 'dry_run' | 'mock' | 'live') => {
+    setMode(val);
+    localStorage.setItem('cs336-submit-mode', val);
+    onModeChange?.(val);
+
+    if (val === 'mock') {
+      const mockEval = evaluations?.evaluations.find(e => e.mock);
+      if (mockEval) {
+        const mId = field(mockEval, 'id', 'evaluation_id', 'evaluationId');
+        setEvaluationId(mId);
+        localStorage.setItem('cs336-eval-id', mId);
+        onEvaluationIdChange?.(mId);
+      }
+    } else if (evaluationId === 'local-mock') {
+      const realEval = evaluations?.evaluations.find(e => !e.mock && field(e, 'status', 'state').toUpperCase() === 'ACTIVE')
+        || evaluations?.evaluations.find(e => !e.mock)
+        || evaluations?.evaluations[0];
+      if (realEval) {
+        const rId = field(realEval, 'id', 'evaluation_id', 'evaluationId');
+        setEvaluationId(rId);
+        localStorage.setItem('cs336-eval-id', rId);
+        onEvaluationIdChange?.(rId);
+      }
+    }
+  };
+
+  const allowedEvaluations = useMemo(() => {
+    return evaluations?.evaluations.filter(item =>
+      mode === 'mock'
+        ? item.mock === true
+        : mode === 'live'
+          ? item.mock !== true && field(item, 'status', 'state').toUpperCase() === 'ACTIVE'
+          : true
+    ) ?? [];
+  }, [evaluations, mode]);
+
+  useEffect(() => {
+    if (allowedEvaluations.length > 0) {
+      const match = allowedEvaluations.some(item => field(item, 'id', 'evaluation_id', 'evaluationId') === evaluationId);
+      if (!match) {
+        const first = field(allowedEvaluations[0], 'id', 'evaluation_id', 'evaluationId');
+        setEvaluationId(first);
+        localStorage.setItem('cs336-eval-id', first);
+        onEvaluationIdChange?.(first);
+      }
+    }
+  }, [allowedEvaluations, evaluationId, onEvaluationIdChange]);
 
   const request = useMemo<SubmissionRequest>(() => ({
     keyframe_id: selected.keyframe_id,
-    timestamp_ms: selected.timestamp_ms,
+    media_item_name: selected.media_item_name,
+    start_ms: startMs,
+    end_ms: endMs,
+    timestamp_ms: startMs,
     task_type: taskType,
     ...(taskType === 'QA' ? { answer } : {}),
     evaluation_id: evaluationId,
     task_key: taskKey.trim(),
     mode,
-  }), [selected, taskType, answer, evaluationId, taskKey, mode]);
+  }), [selected, startMs, endMs, taskType, answer, evaluationId, taskKey, mode]);
 
   const requestKey = JSON.stringify(request);
-
-  const allowedEvaluations = evaluations?.evaluations.filter(item =>
-    mode === 'mock'
-      ? item.mock === true
-      : mode === 'live'
-        ? item.mock !== true && field(item, 'status', 'state').toUpperCase() === 'ACTIVE'
-        : true
-  ) ?? [];
 
   const valid = Boolean(
     allowedEvaluations.some(item => field(item, 'id', 'evaluation_id', 'evaluationId') === evaluationId) &&
@@ -137,9 +249,9 @@ export function SubmissionPanel({
       <div className="form-row">
         <label>
           Loại đáp án
-          <select aria-label="Loại đáp án" value={taskType} onChange={e => setTaskType(e.target.value as 'KIS' | 'QA')}>
-            <option>KIS</option>
-            <option>QA</option>
+          <select aria-label="Loại đáp án" value={taskType} onChange={e => handleTaskTypeChange(e.target.value as 'KIS' | 'QA')}>
+            <option value="KIS">KIS</option>
+            <option value="QA">QA</option>
           </select>
         </label>
         <label>
@@ -147,10 +259,7 @@ export function SubmissionPanel({
           <select
             aria-label="Chế độ"
             value={mode}
-            onChange={e => {
-              setMode(e.target.value as typeof mode);
-              setEvaluationId('');
-            }}
+            onChange={e => handleModeChange(e.target.value as typeof mode)}
           >
             <option value="dry_run">Dry run</option>
             <option value="mock">Luyện tập mock</option>
@@ -161,7 +270,7 @@ export function SubmissionPanel({
 
       <label>
         Evaluation
-        <select aria-label="Evaluation" value={evaluationId} onChange={e => setEvaluationId(e.target.value)}>
+        <select aria-label="Evaluation" value={evaluationId} onChange={e => handleEvaluationIdChange(e.target.value)}>
           <option value="">Chọn phiên đánh giá…</option>
           {allowedEvaluations.map((item, i) => {
             const id = field(item, 'id', 'evaluation_id', 'evaluationId');
@@ -175,7 +284,7 @@ export function SubmissionPanel({
         <input
           aria-label="Task / round key"
           value={taskKey}
-          onChange={e => setTaskKey(e.target.value)}
+          onChange={e => handleTaskKeyChange(e.target.value)}
           placeholder="Ví dụ: round-01"
           autoComplete="off"
         />
@@ -183,24 +292,43 @@ export function SubmissionPanel({
 
       {taskType === 'QA' && (
         <label>
-          Đáp án QA (chuỗi số)
+          Đáp án QA (chữ hoặc số)
           <input
-            aria-label="Đáp án QA (chuỗi số)"
+            aria-label="Đáp án QA (chữ hoặc số)"
             value={answer}
             onChange={e => setAnswer(e.target.value)}
-            inputMode="numeric"
-            placeholder="Ví dụ: 007"
+            placeholder="Ví dụ: red car, A, 007..."
             autoComplete="off"
             aria-invalid={answer !== '' && !validQa(answer)}
           />
-          <span className="input-hint">Chỉ chữ số 0–9; giữ nguyên số 0 đầu (Định dạng: Số-Video-Thời gian).</span>
+          <span className="input-hint">Có thể nhập chữ hoặc số (Định dạng: Đáp án-Video-Thời gian).</span>
         </label>
       )}
 
       <div className="answer-anchor">
-        <span>{selected.media_item_name}</span>
-        <code>{formatTime(selected.timestamp_ms)}</code>
-        <small>{selected.timestamp_ms} ms · {taskType === 'KIS' ? 'KIS gửi start = end' : 'Thời điểm trên video gốc'}</small>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+          <strong>{selected.media_item_name}</strong>
+          <code>{formatTime(startMs)}</code>
+        </div>
+        <div className="form-row" style={{ marginTop: '6px' }}>
+          <label style={{ fontSize: '0.85em' }}>
+            Start (ms)
+            <input
+              type="number"
+              value={startMs}
+              onChange={e => setStartMs(Number(e.target.value))}
+            />
+          </label>
+          <label style={{ fontSize: '0.85em' }}>
+            End (ms)
+            <input
+              type="number"
+              value={endMs}
+              onChange={e => setEndMs(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <small>{startMs} ms → {endMs} ms · {taskType === 'KIS' ? 'KIS hỗ trợ điểm hoặc khoảng thời gian' : 'Thời điểm trên video gốc'}</small>
       </div>
 
       {error && <div role="alert" className="inline-error">{error}</div>}
@@ -294,7 +422,7 @@ export function MockTaskForm({ videos, onCreated }: { videos: Video[]; onCreated
     <div className="form-row"><label>Task key<input value={taskKey} onChange={e => setTaskKey(e.target.value)} placeholder="practice-01" /></label><label>Loại task<select aria-label="Loại task" value={type} onChange={e => setType(e.target.value as typeof type)}><option value="textual_kis">Textual KIS</option><option value="video_kis">Video KIS</option><option value="qa">QA</option></select></label></div>
     <label>Video ground truth<select aria-label="Video ground truth" value={videoUid} onChange={e => setVideoUid(e.target.value)}><option value="">Chọn video đã kiểm tra…</option>{videos.map(video => <option key={video.video_uid} value={video.video_uid}>{video.media_item_name} ({video.source_batch})</option>)}</select></label>
     <div className="form-row"><label>Bắt đầu (ms)<input type="number" min="0" step="1" value={start} onChange={e => setStart(e.target.value)} /></label><label>Kết thúc (ms)<input type="number" min="0" step="1" value={end} onChange={e => setEnd(e.target.value)} /></label></div>
-    {type === 'qa' && <label>Đáp án QA<input inputMode="numeric" value={answer} onChange={e => setAnswer(e.target.value)} placeholder="007" /></label>}
+    {type === 'qa' && <label>Đáp án QA (chữ hoặc số)<input value={answer} onChange={e => setAnswer(e.target.value)} placeholder="Ví dụ: red car, A, 007" /></label>}
     {error && <div className="inline-error" role="alert">{error}</div>}{status && <p className="success" role="status">{status}</p>}
     <button className="button secondary" disabled={!valid || busy} onClick={() => void create()}>{busy ? 'Đang tạo…' : 'Bắt đầu task mock'}</button>
   </div></details>;
