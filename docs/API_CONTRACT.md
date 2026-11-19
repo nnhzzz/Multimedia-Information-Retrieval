@@ -4,7 +4,7 @@ Thời gian API là integer milliseconds. Không có absolute filesystem path/se
 
 - `GET /api/health`: `{status, version}`
 - `GET /api/capabilities`: `{modes: {visual_text,image,ocr,asr,hybrid,temporal}, reasons: {}, contest_mode, task_type, index_version, encoder_id, fixture}`
-- `POST /api/search`: JSON `{mode,query,visual_query?,query_b?,top_k:24,video_uids:[],start_ms?,end_ms?,min_gap_ms:1,max_gap_ms:30000,group_by_video:false,feedback_session:"default",use_feedback:false,expansion:[],weights:{visual:1,ocr:1,asr:1}}`; response `{results:[],elapsed_ms,index_version,query_id,warnings:[]}`.
+- `POST /api/search`: JSON `{mode,query,visual_query?,query_b?,top_k:100,video_uids:[],start_ms?,end_ms?,min_gap_ms:1,max_gap_ms:30000,group_by_video:false,feedback_session:"default",use_feedback:false,expansion:[],weights:{visual:1,ocr:1,asr:1}}`; response `{results:[],elapsed_ms,index_version,query_id,warnings:[]}`.
 - `POST /api/search/image`: multipart `file` OR `POST /api/search/example` JSON `{keyframe_id,top_k}`. Video KIS contest blocks both.
 - Result: `{keyframe_id,video_uid,media_item_name,timestamp_ms,thumbnail_url,video_url,score,contributions:{},text?,pair?:{keyframe_id,timestamp_ms,gap_ms}}`; score is ranking score, never probability.
 - `GET /api/videos/{uid}/neighbors?timestamp_ms=...`: `{results:[]}`.

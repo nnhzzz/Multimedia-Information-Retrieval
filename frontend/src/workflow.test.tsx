@@ -116,6 +116,28 @@ describe('player time contract', () => {
     expect(remove).toHaveBeenCalledWith('loadedmetadata', expect.any(Function));
     await waitFor(() => expect(screen.queryByText('Đang tải filmstrip…')).not.toBeInTheDocument());
   });
+
+  it('switches between submit, media and all tabs in Inspector and persists preference', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ results: [] })));
+    localStorage.removeItem('cs336-inspector-tab');
+    const props = { evaluations: null, saved: false, imageAvailable: false, onClose: vi.fn(), onSelect: vi.fn(), onSave: vi.fn(), onFeedback: vi.fn(), onExample: vi.fn(), onSubmitted: vi.fn() };
+    render(<Inspector selected={fixtureResult} {...props} />);
+
+    // Default tab is submit
+    expect(screen.getByRole('tab', { name: /Nộp bài DRES/i })).toHaveClass('active');
+    expect(screen.getByText('12340 ms · PTS')).toBeInTheDocument();
+
+    // Switch to media tab
+    fireEvent.click(screen.getByRole('tab', { name: /Video & Chi tiết/i }));
+    expect(screen.getByRole('tab', { name: /Video & Chi tiết/i })).toHaveClass('active');
+    expect(localStorage.getItem('cs336-inspector-tab')).toBe('media');
+    expect(screen.getByText('Sang phần nộp bài DRES →')).toBeInTheDocument();
+
+    // Click quick CTA to return to submit tab
+    fireEvent.click(screen.getByText('Sang phần nộp bài DRES →'));
+    expect(screen.getByRole('tab', { name: /Nộp bài DRES/i })).toHaveClass('active');
+    expect(localStorage.getItem('cs336-inspector-tab')).toBe('submit');
+  });
 });
 
 describe('request races', () => {

@@ -101,7 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return remember(payload, invoke(app.state.retrieval.search, payload), started)
 
     @app.post("/api/search/image")
-    async def search_image(file: UploadFile = File(...), top_k: int = Query(24, ge=1, le=200)):
+    async def search_image(file: UploadFile = File(...), top_k: int = Query(100, ge=1, le=200)):
         """Ảnh upload tối đa 10MiB; bytes chỉ sống trong request, không được lưu vào history."""
         protect_image()
         content = await file.read(10 * 1024 * 1024 + 1)

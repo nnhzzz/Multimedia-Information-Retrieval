@@ -132,3 +132,136 @@
 
 
 
+
+
+/* Inspector Tabs & Split Layout */
+.inspector {
+  max-height: calc(100vh - 25px) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+.inspector-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 3px;
+  background: #edf3ec;
+  border-radius: 8px;
+  border: 1px solid #dbe3da;
+}
+.inspector-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #556c62;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.inspector-tab:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.7);
+  color: #17252f;
+}
+.inspector-tab.active {
+  background: #ffffff;
+  color: #1d3b32;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+.inspector-tab .tab-pill {
+  font-size: 7.5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1.2;
+}
+.inspector-tab .tab-pill.live {
+  background: #ffede8;
+  color: #bf4527;
+  border: 1px solid #f9c2b3;
+}
+
+/* Compact Keyframe Card in Submit Tab */
+.compact-frame-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #f8faf6;
+  border: 1px solid #e2e8df;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.compact-frame-thumb {
+  width: 58px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #17252f;
+  border: 1px solid #d4ddd2;
+  flex-shrink: 0;
+}
+.compact-frame-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.compact-frame-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.compact-frame-title strong {
+  font-size: 12px;
+  color: #1a2e28;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-frame-title code {
+  font-size: 10.5px;
+  color: #275e52;
+  font-weight: 600;
+  background: #eef4ed;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.compact-frame-ms {
+  font-size: 9.5px;
+  color: #72847a;
+  font-family: monospace;
+}
+.compact-frame-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.compact-btn {
+  padding: 3px 6px !important;
+  min-height: 25px !important;
+  font-size: 10.5px !important;
+  border: 1px solid #d6ded4 !important;
+  background: #ffffff !important;
+  border-radius: 5px !important;
+}
+.compact-btn.active-btn {
+  background: #e5ede7 !important;
+  color: #1e4539 !important;
+  font-weight: 600 !important;
+}
+.compact-btn:hover:not(:disabled) {
+  background: #f0f5ee !important;
+}

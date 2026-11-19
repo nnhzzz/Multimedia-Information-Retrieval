@@ -92,7 +92,7 @@ class NumpyShardIndex:
         if len(self.locations) != self.manifest["row_count"]:
             raise ValueError("Tổng mapping không khớp row_count.")
 
-    def search(self, query: np.ndarray, top_k: int = 24, allowed_ids: set[str] | None = None) -> list[tuple[str, float]]:
+    def search(self, query: np.ndarray, top_k: int = 100, allowed_ids: set[str] | None = None) -> list[tuple[str, float]]:
         """Exact search theo block; áp dụng filter trước top-k, RAM O(block*D)."""
         query = normalize(query)
         if query.shape != (self.dimension,):
@@ -179,7 +179,7 @@ class FaissIndex:
         for _, values in source.shards:
             self.index.add(np.asarray(values))
 
-    def search(self, query: np.ndarray, top_k: int = 24, allowed_ids: set[str] | None = None) -> list[tuple[str, float]]:
+    def search(self, query: np.ndarray, top_k: int = 100, allowed_ids: set[str] | None = None) -> list[tuple[str, float]]:
         """Filter chuyển về exact NumPy để không mất kết quả do post-filter."""
         if allowed_ids is not None:
             return self.source.search(query, top_k, allowed_ids)

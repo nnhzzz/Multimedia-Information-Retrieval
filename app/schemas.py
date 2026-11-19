@@ -59,7 +59,7 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     visual_query: str | None = Field(default=None, max_length=4000)
     query_b: str | None = Field(default=None, max_length=4000)
-    top_k: int = Field(default=24, ge=1, le=200)
+    top_k: int = Field(default=100, ge=1, le=200)
     video_uids: list[str] = Field(default_factory=list, max_length=2000)
     start_ms: int | None = Field(default=None, ge=0, strict=True)
     end_ms: int | None = Field(default=None, ge=0, strict=True)
@@ -123,7 +123,7 @@ class SubmissionRequest(BaseModel):
 class ExampleRequest(BaseModel):
     """Query-by-example dùng embedding cùng không gian của một keyframe đã có."""
     keyframe_id: str
-    top_k: int = Field(default=24, ge=1, le=200)
+    top_k: int = Field(default=100, ge=1, le=200)
 
 
 class DresConfigRequest(BaseModel):

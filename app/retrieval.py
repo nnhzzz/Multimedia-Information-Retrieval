@@ -43,7 +43,7 @@ def weighted_rrf(channels: dict[str, list[dict]], weights: dict[str, float], con
     return sorted(fused.values(), key=lambda row: (-row["score"], row["keyframe_id"]))
 
 
-def temporal_pairs(first: list[dict], second: list[dict], min_gap_ms: int = 1, max_gap_ms: int = 30000, top_k: int = 24) -> list[dict]:
+def temporal_pairs(first: list[dict], second: list[dict], min_gap_ms: int = 1, max_gap_ms: int = 30000, top_k: int = 100) -> list[dict]:
     """Ghép trong candidate/video bằng binary search; tuyệt đối B>A.
 
     Không tạo ma trận NxN toàn kho. Hai tập ứng viên được giới hạn upstream;
@@ -172,14 +172,14 @@ class RetrievalService:
                 if negative:
                     vector -= .25 * np.mean(negative, axis=0)
                 vector = normalize(vector)
-        limit = min(2000, max(100, int(request.get("top_k", 24)) * 8))
+        limit = min(2000, max(100, int(request.get("top_k", 100)) * 8))
         allowed = {row["keyframe_id"] for row in rows} if rows is not None else None
         matches = index.search(vector, limit, allowed)
         by_id = {row["keyframe_id"]: row for row in self._rows({"keyframe_ids": [identifier for identifier, _ in matches]})}
         return [self._result(by_id[identifier], score, {"visual": {"cosine": score}}) for identifier, score in matches if identifier in by_id]
 
     def _text(self, query: str, source: str, request: dict, rows: list[dict] | None) -> list[dict]:
-        limit = min(2000, max(100, int(request.get("top_k", 24)) * 8))
+        limit = min(2000, max(100, int(request.get("top_k", 100)) * 8))
         segments = search_database(self.db, query, source, limit, video_uids=request.get("video_uids"), start_ms=request.get("start_ms"), end_ms=request.get("end_ms"))
         winners = {}
         with self.db.connection() as connection:
@@ -275,7 +275,7 @@ class RetrievalService:
                         second_visual = candidate_b.strip()
                 second_request = dict(request, visual_query=second_visual)
                 second = weighted_rrf(self._channels(request["query_b"], second_request, rows, warnings), request.get("weights", {}))
-                results = temporal_pairs(first, second, request.get("min_gap_ms", 1), request.get("max_gap_ms", 30000), request.get("top_k", 24))
+                results = temporal_pairs(first, second, request.get("min_gap_ms", 1), request.get("max_gap_ms", 30000), request.get("top_k", 100))
             else:
                 results = first
         else:
@@ -283,7 +283,7 @@ class RetrievalService:
         if request.get("group_by_video"):
             seen = set()
             results = [row for row in results if not (row["video_uid"] in seen or seen.add(row["video_uid"]))]
-        results = results[:request.get("top_k", 24)]
+        results = results[:request.get("top_k", 100)]
         for rank, row in enumerate(results, 1):
             row["rank"] = rank
         index = self._load_index()
@@ -298,7 +298,7 @@ class RetrievalService:
         if self.settings.contest_mode and self.settings.task_type == "video_kis":
             raise PermissionError("Video KIS contest chặn truy vấn ảnh theo profile AIC2024.")
 
-    def search_image(self, image_bytes: bytes, top_k: int = 24) -> dict:
+    def search_image(self, image_bytes: bytes, top_k: int = 100) -> dict:
         """Decode ảnh upload giới hạn size/pixel rồi encode cùng space index."""
         self._image_allowed()
         started = time.perf_counter()
@@ -326,7 +326,7 @@ class RetrievalService:
         results = [self._result(rows[identifier], score, {"visual": {"cosine": score}}) for identifier, score in matches if identifier in rows]
         return {"results": results, "elapsed_ms": (time.perf_counter() - started) * 1000, "index_version": index.version, "warnings": ["Fixture tổng hợp; chỉ kiểm tra contract."] if index.manifest.get("fixture") else []}
 
-    def search_example(self, keyframe_id: str, top_k: int = 24) -> dict:
+    def search_example(self, keyframe_id: str, top_k: int = 100) -> dict:
         """Lấy vector đã lưu, giữ nguyên space; contest chặn cả endpoint này."""
         self._image_allowed()
         started = time.perf_counter()
